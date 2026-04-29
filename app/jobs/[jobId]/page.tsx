@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField } from '@/lib/supabase/types'
 
@@ -349,18 +349,6 @@ export default function JobDetailPage() {
   const [job, setJob] = useState<JobWithHeaders | null>(null)
   const [rows, setRows] = useState<EnrichRow[]>([])
   const [notFound, setNotFound] = useState(false)
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const fetchJob = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/enrich/status/${jobId}`)
-      if (res.status === 404) { setNotFound(true); return }
-      const json = await res.json()
-      if (json.data) setJob(json.data)
-    } catch {
-      // retry next interval
-    }
-  }, [jobId])
 
   const fetchRows = useCallback(async () => {
     try {
@@ -373,26 +361,34 @@ export default function JobDetailPage() {
   }, [jobId])
 
   useEffect(() => {
-    fetchJob()
-  }, [fetchJob])
+    let interval: NodeJS.Timeout
+    let rowsFetched = false
 
-  useEffect(() => {
-    if (!job) return
-
-    if (intervalRef.current) clearInterval(intervalRef.current)
-
-    if (job.status !== 'ready' && job.status !== 'complete' && job.status !== 'failed') {
-      intervalRef.current = setInterval(fetchJob, 2000)
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/enrich/status/${jobId}`)
+        if (res.status === 404) { setNotFound(true); clearInterval(interval); return }
+        if (!res.ok) return
+        const json = await res.json()
+        const data = json.data as JobWithHeaders
+        setJob(data)
+        if (data.status === 'ready' || data.status === 'complete') {
+          if (!rowsFetched) { rowsFetched = true; fetchRows() }
+          clearInterval(interval)
+        }
+        if (data.status === 'failed') {
+          clearInterval(interval)
+        }
+      } catch (e) {
+        console.error('Poll error:', e)
+      }
     }
 
-    if (job.status === 'ready' || job.status === 'complete') {
-      fetchRows()
-    }
+    poll()
+    interval = setInterval(poll, 2000)
 
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-    }
-  }, [job?.status, fetchJob, fetchRows])
+    return () => clearInterval(interval)
+  }, [jobId, fetchRows])
 
   async function handleConfirm(mapping: ColumnMapping) {
     const res = await fetch('/api/enrich/confirm', {
@@ -402,7 +398,6 @@ export default function JobDetailPage() {
     })
     const json = await res.json()
     if (!res.ok) throw new Error(json.error ?? 'Failed to confirm mapping')
-    await fetchJob()
   }
 
   if (notFound) {
@@ -440,11 +435,11 @@ export default function JobDetailPage() {
         <ReadyState job={job} rows={rows} />
       )}
 
-      {(job.status === 'awaiting_confirmation' || job.status === 'generating') && job.column_mapping && (
+      {job.status === 'awaiting_confirmation' && job.column_mapping && (
         <MappingState job={job} onConfirm={handleConfirm} />
       )}
 
-      {(job.status === 'pending' || job.status === 'parsing' || job.status === 'mapping') && (
+      {(job.status === 'pending' || job.status === 'parsing' || job.status === 'mapping' || job.status === 'generating') && (
         <ProcessingState status={job.status} />
       )}
     </main>

@@ -32,6 +32,7 @@ export default function DashboardPage() {
   const [hsTicketUrl, setHsTicketUrl] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const hsTicketValid = hsTicketUrl.startsWith('https://app.hubspot.com/')
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -48,11 +49,24 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchJobs()
-    intervalRef.current = setInterval(fetchJobs, 10000)
+    intervalRef.current = setInterval(fetchJobs, 3000)
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
   }, [])
+
+  async function handleDelete(jobId: string) {
+    if (!window.confirm('Delete this job and all its rows?')) return
+    try {
+      const res = await fetch(`/api/enrich/jobs/${jobId}`, { method: 'DELETE' })
+      const json = await res.json()
+      if (!res.ok) { setDeleteError(json.error ?? 'Delete failed'); return }
+      setJobs((prev) => prev.filter((j) => j.id !== jobId))
+      setDeleteError(null)
+    } catch {
+      setDeleteError('Network error — could not delete job')
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -148,6 +162,10 @@ export default function DashboardPage() {
         )}
       </form>
 
+      {deleteError && (
+        <p className="mb-4 text-sm text-red-600">{deleteError}</p>
+      )}
+
       {jobs.length === 0 ? (
         <p className="text-sm text-gray-500">No jobs yet. Upload a CSV file above to get started.</p>
       ) : (
@@ -179,13 +197,19 @@ export default function DashboardPage() {
                   <td className="px-4 py-3">
                     <StatusBadge status={job.status} />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 flex items-center gap-3">
                     <a
                       href={`/jobs/${job.id}`}
                       className="text-blue-600 hover:underline text-sm"
                     >
                       View
                     </a>
+                    <button
+                      onClick={() => handleDelete(job.id)}
+                      className="text-red-500 hover:underline text-sm"
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}
