@@ -28,7 +28,7 @@ function truncate(str: string, max = 60): string {
 export default function DashboardPage() {
   const router = useRouter()
   const [jobs, setJobs] = useState<EnrichJob[]>([])
-  const [sheetUrl, setSheetUrl] = useState('')
+  const [file, setFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -53,13 +53,18 @@ export default function DashboardPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!file) {
+      setError('Please select a CSV file')
+      return
+    }
     setError(null)
     setSubmitting(true)
     try {
+      const formData = new FormData()
+      formData.append('file', file)
       const res = await fetch('/api/enrich/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheetUrl }),
+        body: formData,
       })
       let json: { data?: { jobId: string }; error?: string }
       try {
@@ -86,23 +91,27 @@ export default function DashboardPage() {
 
       <form onSubmit={handleSubmit} className="mb-10">
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          Google Sheet URL
+          Upload contacts CSV
         </label>
-        <div className="flex gap-3">
-          <input
-            type="url"
-            value={sheetUrl}
-            onChange={(e) => setSheetUrl(e.target.value)}
-            placeholder="https://docs.google.com/spreadsheets/d/…"
-            className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            required
-          />
+        <div className="flex items-center gap-3">
+          <label className="cursor-pointer rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 whitespace-nowrap">
+            {file ? file.name : 'Choose file…'}
+            <input
+              type="file"
+              accept=".csv"
+              className="sr-only"
+              onChange={(e) => {
+                setFile(e.target.files?.[0] ?? null)
+                setError(null)
+              }}
+            />
+          </label>
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || !file}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {submitting ? 'Starting…' : 'Submit'}
+            {submitting ? 'Uploading…' : 'Upload and detect columns'}
           </button>
         </div>
         {error && (

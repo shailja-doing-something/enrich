@@ -27,10 +27,6 @@ const bodySchema = z.object({
   columnMapping: columnMappingSchema,
 })
 
-function toExportUrl(url: string): string {
-  return url.replace(/\/(edit|view)[^?]*(\?.*)?$/, '/export?format=csv')
-}
-
 export async function POST(request: NextRequest) {
   const parsed = bodySchema.safeParse(await request.json())
   if (!parsed.success) {
@@ -58,15 +54,12 @@ export async function POST(request: NextRequest) {
       status: 'generating',
     })
 
-    const csvUrl = toExportUrl(job.sheet_url)
-    const res = await fetch(csvUrl)
-    if (!res.ok) {
-      await updateJob(jobId, { status: 'failed', error_log: `CSV fetch failed: ${res.status}` })
-      return Response.json({ error: 'Failed to fetch sheet' }, { status: 500 })
+    if (!job.raw_csv) {
+      await updateJob(jobId, { status: 'failed', error_log: 'Original CSV not found' })
+      return Response.json({ error: 'Original CSV not found. Please start over.' }, { status: 500 })
     }
 
-    const csvText = await res.text()
-    const parseResult = Papa.parse<Record<string, string>>(csvText, {
+    const parseResult = Papa.parse<Record<string, string>>(job.raw_csv, {
       header: true,
       skipEmptyLines: true,
     })

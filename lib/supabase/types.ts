@@ -53,6 +53,7 @@ export type EnrichJob = {
   hubspot_written_at: string | null
   error_log: string | null
   source_headers: string[] | null
+  raw_csv: string | null
 }
 
 export type EnrichRow = {
