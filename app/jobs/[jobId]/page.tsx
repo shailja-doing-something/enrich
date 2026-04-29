@@ -6,7 +6,7 @@ import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField } from '@/
 
 type JobWithHeaders = EnrichJob & { sourceHeaders: string[] }
 
-const TARGET_FIELD_LABELS: Record<keyof ColumnMapping, string> = {
+const TARGET_FIELD_LABELS: Partial<Record<keyof ColumnMapping, string>> = {
   list_name: 'Full Name',
   list_email: 'Email',
   list_phone: 'Phone',
@@ -14,12 +14,11 @@ const TARGET_FIELD_LABELS: Record<keyof ColumnMapping, string> = {
   list_brokerage: 'Brokerage',
   list_website: 'Website',
   list_location: 'Location',
-  HS_Ticket: 'HubSpot Ticket URL',
 }
 
 const FIELD_ORDER: (keyof ColumnMapping)[] = [
   'list_name', 'list_email', 'list_phone', 'list_team_name',
-  'list_brokerage', 'list_website', 'list_location', 'HS_Ticket',
+  'list_brokerage', 'list_website', 'list_location',
 ]
 
 function ConfidenceBadge({ confidence }: { confidence: ColumnMappingField['confidence'] }) {
@@ -111,7 +110,9 @@ function MappingState({
       .filter((s): s is string => s !== null)
   )
 
-  const unmappedTargets = FIELD_ORDER.filter((f) => mapping[f].source_column === null)
+  const unmappedTargets = (Object.entries(mapping) as [keyof ColumnMapping, ColumnMappingField][])
+    .filter(([field, value]) => field !== 'HS_Ticket' && value.source_column === null)
+    .map(([field]) => field)
   const ignoredHeaders = sourceHeaders.filter((h) => !mappedSourceColumns.has(h))
 
   function updateField(field: keyof ColumnMapping, sourceColumn: string | null) {
