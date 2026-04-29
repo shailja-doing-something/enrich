@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Papa from 'papaparse'
 import { z } from 'zod'
 import { getJob, updateJob } from '@/lib/supabase/jobs'
-import { supabaseAdmin } from '@/lib/supabase/client'
-import { mapRowToBranches } from '@/lib/enrichment/columnMapper'
-import type { ColumnMapping, InsertEnrichRow } from '@/lib/supabase/types'
+import type { ColumnMapping } from '@/lib/supabase/types'
 
 const columnMappingFieldSchema = z.object({
   source_column: z.string().nullable(),
@@ -51,64 +48,33 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'HubSpot ticket URL missing from job. Please start over.' }, { status: 400 })
   }
 
+  if (!job.raw_csv) {
+    return Response.json({ error: 'Raw CSV missing from job. Please start over.' }, { status: 400 })
+  }
+
   await updateJob(jobId, {
     column_mapping: columnMapping as ColumnMapping,
     mapping_confirmed: true,
     status: 'generating',
   })
 
-  const response = NextResponse.json({ data: { jobId, status: 'generating' } })
+  const edgeFunctionUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-enrich-rows`
 
-  setImmediate(async () => {
-    try {
-      const freshJob = await getJob(jobId)
-      if (!freshJob?.raw_csv) {
-        await updateJob(jobId, { status: 'failed', error_log: 'Original CSV not found' })
-        return
-      }
-
-      const hsTicketUrl = freshJob.hs_ticket_url!
-
-      const parseResult = Papa.parse<Record<string, string>>(freshJob.raw_csv, {
-        header: true,
-        skipEmptyLines: true,
-      })
-
-      const rows = parseResult.data
-      const insertRows: InsertEnrichRow[] = rows.map((row, rowIndex) => {
-        const { teamSizeRow, zillowRow } = mapRowToBranches(row, columnMapping as ColumnMapping)
-        teamSizeRow.HS_Ticket = hsTicketUrl
-        zillowRow.HS_ticket_link = hsTicketUrl
-        return {
-          job_id: jobId,
-          row_index: rowIndex,
-          hs_ticket_url: hsTicketUrl,
-          raw_data: row,
-          team_size_input: teamSizeRow,
-          zillow_input: zillowRow,
-        }
-      })
-
-      const BATCH_SIZE = 50
-      for (let i = 0; i < insertRows.length; i += BATCH_SIZE) {
-        const batch = insertRows.slice(i, i + BATCH_SIZE)
-        const { error } = await supabaseAdmin.from('enrich_rows').insert(batch)
-        if (error) throw new Error(`Batch insert failed at offset ${i}: ${error.message}`)
-        if (i + BATCH_SIZE < insertRows.length) {
-          await new Promise((r) => setTimeout(r, 100))
-        }
-      }
-
-      await updateJob(jobId, {
-        status: 'ready',
-        parsed_at: new Date().toISOString(),
-      })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error(message)
-      await updateJob(jobId, { status: 'failed', error_log: message }).catch(() => {})
-    }
+  fetch(edgeFunctionUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+    body: JSON.stringify({
+      jobId: job.id,
+      columnMapping,
+      hsTicketUrl: job.hs_ticket_url,
+      rawCsv: job.raw_csv,
+    }),
+  }).catch(err => {
+    console.error('Edge function call failed:', err)
   })
 
-  return response
+  return NextResponse.json({ data: { jobId, status: 'generating' } })
 }

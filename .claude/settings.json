@@ -1,0 +1,111 @@
+{
+  "hooks": {
+    "preCommit": {
+      "enabled": true,
+      "script": ".claude/hooks/pre-commit.sh",
+      "description": "Run tests and lint before every commit. Blocks on failure."
+    },
+    "lintOnSave": {
+      "enabled": false,
+      "script": ".claude/hooks/lint-on-save.sh",
+      "description": "Lint TypeScript files on save. Enable in your editor integration."
+    }
+  },
+  "agents": {
+    "codeReviewer": {
+      "enabled": true,
+      "file": ".claude/agents/code-reviewer.md",
+      "autoTrigger": "on PR review request"
+    },
+    "debugger": {
+      "enabled": true,
+      "file": ".claude/agents/debugger.md",
+      "autoTrigger": "on error diagnosis"
+    },
+    "testWriter": {
+      "enabled": true,
+      "file": ".claude/agents/test-writer.md",
+      "autoTrigger": "on new feature or bug fix"
+    },
+    "refactorer": {
+      "enabled": true,
+      "file": ".claude/agents/refactorer.md",
+      "autoTrigger": "on explicit refactor request"
+    },
+    "docWriter": {
+      "enabled": true,
+      "file": ".claude/agents/doc-writer.md",
+      "autoTrigger": "on docs update or post-commit"
+    },
+    "securityAuditor": {
+      "enabled": true,
+      "file": ".claude/agents/security-auditor.md",
+      "autoTrigger": "on pre-deploy or security concern"
+    }
+  },
+  "commands": {
+    "fixIssue": {
+      "enabled": true,
+      "file": ".claude/commands/fix-issue.md",
+      "invoke": "/fix-issue <issue-number>"
+    },
+    "deploy": {
+      "enabled": true,
+      "file": ".claude/commands/deploy.md",
+      "invoke": "/deploy"
+    },
+    "preReview": {
+      "enabled": true,
+      "file": ".claude/commands/pre-review.md",
+      "invoke": "/pre-review"
+    }
+  },
+  "rules": {
+    "frontend": {
+      "enabled": true,
+      "file": ".claude/rules/frontend.md",
+      "appliesTo": ["app/**/*.ts", "app/**/*.tsx"]
+    },
+    "database": {
+      "enabled": true,
+      "file": ".claude/rules/database.md",
+      "appliesTo": ["lib/supabase.ts", "**/*.ts"]
+    },
+    "api": {
+      "enabled": true,
+      "file": ".claude/rules/api.md",
+      "appliesTo": ["app/api/**/*.ts"]
+    },
+    "gitPush": {
+      "enabled": true,
+      "file": ".claude/rules/git-push.md",
+      "appliesTo": ["*"]
+    }
+  },
+  "permissions": {
+    "allow": [
+      "npm run test",
+      "npm run lint",
+      "npm run build",
+      "npm run dev",
+      "gh issue view",
+      "gh pr create",
+      "git status",
+      "git diff",
+      "git log",
+      "git add",
+      "git commit",
+      "git checkout",
+      "git branch",
+      "npx supabase status"
+    ],
+    "deny": [
+      "git push --force",
+      "git reset --hard",
+      "rm -rf",
+      "npx supabase db reset",
+      "DROP TABLE",
+      "DELETE FROM enrich_"
+    ]
+  }
+}
