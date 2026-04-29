@@ -4,9 +4,10 @@ import { supabaseAdmin } from '@/lib/supabase/client'
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: { jobId: string } }
+  { params }: { params: Promise<{ jobId: string }> }
 ) {
-  const parsed = z.string().uuid().safeParse(params.jobId)
+  const { jobId: rawJobId } = await params
+  const parsed = z.string().uuid().safeParse(rawJobId)
   if (!parsed.success) {
     return Response.json({ error: 'Invalid job ID' }, { status: 400 })
   }

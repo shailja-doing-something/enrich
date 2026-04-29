@@ -10,9 +10,9 @@ const paramsSchema = z.object({
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { jobId: string } }
+  { params }: { params: Promise<{ jobId: string }> }
 ) {
-  const parsed = paramsSchema.safeParse(params)
+  const parsed = paramsSchema.safeParse(await params)
   if (!parsed.success) {
     return Response.json({ error: 'Invalid job ID' }, { status: 400 })
   }
