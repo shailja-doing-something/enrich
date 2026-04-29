@@ -97,14 +97,11 @@ function MappingState({
   onConfirm,
 }: {
   job: JobWithHeaders
-  onConfirm: (mapping: ColumnMapping, hsTicketUrl: string) => Promise<void>
+  onConfirm: (mapping: ColumnMapping) => Promise<void>
 }) {
   const [mapping, setMapping] = useState<ColumnMapping>(() => job.column_mapping!)
-  const [hsTicketUrl, setHsTicketUrl] = useState('')
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const hsTicketValid = hsTicketUrl.startsWith('https://app.hubspot.com/')
 
   const sourceHeaders = job.sourceHeaders ?? []
 
@@ -125,14 +122,10 @@ function MappingState({
   }
 
   async function handleConfirm() {
-    if (!hsTicketValid) {
-      setError('Enter a valid HubSpot ticket URL before confirming.')
-      return
-    }
     setConfirming(true)
     setError(null)
     try {
-      await onConfirm(mapping, hsTicketUrl)
+      await onConfirm(mapping)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
       setConfirming(false)
@@ -205,31 +198,14 @@ function MappingState({
         </div>
       )}
 
-      <div className="mb-6">
-        <h3 className="text-base font-semibold mb-1">HubSpot Ticket URL</h3>
-        <p className="text-sm text-gray-500 mb-2">
-          This URL will be applied to all rows in both output sheets.
-        </p>
-        <input
-          type="url"
-          value={hsTicketUrl}
-          onChange={(e) => setHsTicketUrl(e.target.value)}
-          placeholder="https://app.hubspot.com/contacts/..."
-          className="w-full max-w-lg rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        {hsTicketUrl.length > 0 && !hsTicketValid && (
-          <p className="mt-1 text-xs text-red-600">Must start with https://app.hubspot.com/</p>
-        )}
-      </div>
-
       {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
 
       <button
         onClick={handleConfirm}
-        disabled={confirming || !hsTicketValid}
+        disabled={confirming}
         className="rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {confirming ? 'Generating…' : 'Confirm and generate sheets'}
+        {confirming ? 'Confirming…' : 'Confirm and generate sheets'}
       </button>
     </div>
   )
@@ -374,16 +350,15 @@ export default function JobDetailPage() {
     }
   }, [job?.status, fetchJob, fetchRows])
 
-  async function handleConfirm(mapping: ColumnMapping, hsTicketUrl: string) {
+  async function handleConfirm(mapping: ColumnMapping) {
     const res = await fetch('/api/enrich/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId, columnMapping: mapping, hs_ticket_url: hsTicketUrl }),
+      body: JSON.stringify({ jobId, columnMapping: mapping }),
     })
     const json = await res.json()
     if (!res.ok) throw new Error(json.error ?? 'Failed to confirm mapping')
     await fetchJob()
-    await fetchRows()
   }
 
   if (notFound) {

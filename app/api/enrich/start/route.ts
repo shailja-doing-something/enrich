@@ -20,6 +20,18 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Please upload a CSV file' }, { status: 400 })
   }
 
+  const hsTicketUrl = formData.get('hs_ticket_url')
+  if (
+    !hsTicketUrl ||
+    typeof hsTicketUrl !== 'string' ||
+    !hsTicketUrl.startsWith('https://app.hubspot.com/')
+  ) {
+    return Response.json(
+      { error: 'HubSpot ticket URL must start with https://app.hubspot.com/' },
+      { status: 400 }
+    )
+  }
+
   const csvContent = await file.text()
 
   let jobId: string | undefined
@@ -52,6 +64,7 @@ export async function POST(request: NextRequest) {
       raw_row_count: rows.length,
       source_headers: headers,
       raw_csv: csvContent,
+      hs_ticket_url: hsTicketUrl,
     })
 
     return Response.json({

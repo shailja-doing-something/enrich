@@ -1,8 +1,8 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import Papa from 'papaparse'
 import { z } from 'zod'
 import { getJob, updateJob } from '@/lib/supabase/jobs'
-import { createRows } from '@/lib/supabase/rows'
+import { supabaseAdmin } from '@/lib/supabase/client'
 import { mapRowToBranches } from '@/lib/enrichment/columnMapper'
 import type { ColumnMapping, InsertEnrichRow } from '@/lib/supabase/types'
 
@@ -25,7 +25,6 @@ const columnMappingSchema = z.object({
 const bodySchema = z.object({
   jobId: z.string().uuid(),
   columnMapping: columnMappingSchema,
-  hs_ticket_url: z.string().min(1).startsWith('https://app.hubspot.com/'),
 })
 
 export async function POST(request: NextRequest) {
@@ -34,7 +33,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: parsed.error.message }, { status: 400 })
   }
 
-  const { jobId, columnMapping, hs_ticket_url } = parsed.data
+  const { jobId, columnMapping } = parsed.data
 
   const job = await getJob(jobId)
   if (!job) {
@@ -48,56 +47,68 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  try {
-    await updateJob(jobId, {
-      column_mapping: columnMapping as ColumnMapping,
-      mapping_confirmed: true,
-      status: 'generating',
-    })
-
-    if (!job.raw_csv) {
-      await updateJob(jobId, { status: 'failed', error_log: 'Original CSV not found' })
-      return Response.json({ error: 'Original CSV not found. Please start over.' }, { status: 500 })
-    }
-
-    const parseResult = Papa.parse<Record<string, string>>(job.raw_csv, {
-      header: true,
-      skipEmptyLines: true,
-    })
-
-    const rows = parseResult.data
-    const insertRows: InsertEnrichRow[] = rows.map((row, rowIndex) => {
-      const { teamSizeRow, zillowRow } = mapRowToBranches(row, columnMapping as ColumnMapping)
-      teamSizeRow.HS_Ticket = hs_ticket_url
-      zillowRow.HS_ticket_link = hs_ticket_url
-      return {
-        job_id: jobId,
-        row_index: rowIndex,
-        hs_ticket_url,
-        raw_data: row,
-        team_size_input: teamSizeRow,
-        zillow_input: zillowRow,
-      }
-    })
-
-    await createRows(insertRows)
-
-    await updateJob(jobId, {
-      status: 'ready',
-      parsed_at: new Date().toISOString(),
-    })
-
-    return Response.json({
-      data: {
-        jobId,
-        rowCount: rows.length,
-        status: 'ready',
-      },
-    })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error(message)
-    await updateJob(jobId, { status: 'failed', error_log: message })
-    return Response.json({ error: 'Internal server error' }, { status: 500 })
+  if (!job.hs_ticket_url) {
+    return Response.json({ error: 'HubSpot ticket URL missing from job. Please start over.' }, { status: 400 })
   }
+
+  await updateJob(jobId, {
+    column_mapping: columnMapping as ColumnMapping,
+    mapping_confirmed: true,
+    status: 'generating',
+  })
+
+  const response = NextResponse.json({ data: { jobId, status: 'generating' } })
+
+  setImmediate(async () => {
+    try {
+      const freshJob = await getJob(jobId)
+      if (!freshJob?.raw_csv) {
+        await updateJob(jobId, { status: 'failed', error_log: 'Original CSV not found' })
+        return
+      }
+
+      const hsTicketUrl = freshJob.hs_ticket_url!
+
+      const parseResult = Papa.parse<Record<string, string>>(freshJob.raw_csv, {
+        header: true,
+        skipEmptyLines: true,
+      })
+
+      const rows = parseResult.data
+      const insertRows: InsertEnrichRow[] = rows.map((row, rowIndex) => {
+        const { teamSizeRow, zillowRow } = mapRowToBranches(row, columnMapping as ColumnMapping)
+        teamSizeRow.HS_Ticket = hsTicketUrl
+        zillowRow.HS_ticket_link = hsTicketUrl
+        return {
+          job_id: jobId,
+          row_index: rowIndex,
+          hs_ticket_url: hsTicketUrl,
+          raw_data: row,
+          team_size_input: teamSizeRow,
+          zillow_input: zillowRow,
+        }
+      })
+
+      const BATCH_SIZE = 50
+      for (let i = 0; i < insertRows.length; i += BATCH_SIZE) {
+        const batch = insertRows.slice(i, i + BATCH_SIZE)
+        const { error } = await supabaseAdmin.from('enrich_rows').insert(batch)
+        if (error) throw new Error(`Batch insert failed at offset ${i}: ${error.message}`)
+        if (i + BATCH_SIZE < insertRows.length) {
+          await new Promise((r) => setTimeout(r, 100))
+        }
+      }
+
+      await updateJob(jobId, {
+        status: 'ready',
+        parsed_at: new Date().toISOString(),
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(message)
+      await updateJob(jobId, { status: 'failed', error_log: message }).catch(() => {})
+    }
+  })
+
+  return response
 }

@@ -54,6 +54,7 @@ export type EnrichJob = {
   error_log: string | null
   source_headers: string[] | null
   raw_csv: string | null
+  hs_ticket_url: string | null
 }
 
 export type EnrichRow = {
