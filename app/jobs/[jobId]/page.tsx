@@ -215,6 +215,29 @@ function MappingState({
 const TEAM_SIZE_HEADERS = ['list_name', 'list_email', 'list_phone', 'list_team_name', 'list_brokerage', 'list_website', 'list_location', 'HS_Ticket']
 const ZILLOW_HEADERS = ['list_name', 'list_company', 'list_location', 'brokerage_name', 'list_mobile', 'list_email', 'HS_ticket_link']
 
+function downloadAsCSV(rows: Record<string, unknown>[], filename: string) {
+  if (!rows || rows.length === 0) return
+  const headers = Object.keys(rows[0])
+  const csvLines = [
+    headers.join(','),
+    ...rows.map(row =>
+      headers.map(h => {
+        const val = String(row[h] ?? '')
+        return val.includes(',') || val.includes('"') || val.includes('\n')
+          ? `"${val.replace(/"/g, '""')}"`
+          : val
+      }).join(',')
+    )
+  ]
+  const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function ReadyState({ job, rows }: { job: JobWithHeaders; rows: EnrichRow[] }) {
   const [expanded, setExpanded] = useState(false)
   const displayRows = expanded ? rows : rows.slice(0, 5)
@@ -227,7 +250,18 @@ function ReadyState({ job, rows }: { job: JobWithHeaders; rows: EnrichRow[] }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div>
-          <h3 className="font-semibold text-sm mb-2">Team Size Input ({rows.length} rows)</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold text-sm">Team Size Input ({rows.length} rows)</h3>
+            <button
+              onClick={() => downloadAsCSV(
+                rows.map(r => r.team_size_input).filter(Boolean) as Record<string, unknown>[],
+                `team-size-input-${job.id}.csv`
+              )}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Download Team Size CSV
+            </button>
+          </div>
           <div className="overflow-x-auto rounded-lg border border-gray-200">
             <table className="min-w-full divide-y divide-gray-200 text-xs">
               <thead className="bg-gray-50">
@@ -253,7 +287,18 @@ function ReadyState({ job, rows }: { job: JobWithHeaders; rows: EnrichRow[] }) {
         </div>
 
         <div>
-          <h3 className="font-semibold text-sm mb-2">Zillow Input ({rows.length} rows)</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold text-sm">Zillow Input ({rows.length} rows)</h3>
+            <button
+              onClick={() => downloadAsCSV(
+                rows.map(r => r.zillow_input).filter(Boolean) as Record<string, unknown>[],
+                `zillow-input-${job.id}.csv`
+              )}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Download Zillow CSV
+            </button>
+          </div>
           <div className="overflow-x-auto rounded-lg border border-gray-200">
             <table className="min-w-full divide-y divide-gray-200 text-xs">
               <thead className="bg-gray-50">
