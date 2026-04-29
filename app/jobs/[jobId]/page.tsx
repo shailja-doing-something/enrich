@@ -44,17 +44,50 @@ function Spinner() {
   )
 }
 
-const STATUS_LABELS: Partial<Record<EnrichJob['status'], string>> = {
-  parsing: 'Fetching and reading your sheet…',
-  mapping: 'Detecting column names…',
-  generating: 'Generating input sheets…',
+type StepState = 'pending' | 'active' | 'done'
+
+const STEPS: { label: string; activeOn: EnrichJob['status'][] }[] = [
+  { label: 'Uploading CSV',         activeOn: ['pending', 'parsing'] },
+  { label: 'Detecting columns',     activeOn: ['mapping'] },
+  { label: 'Generating input sheets', activeOn: ['generating'] },
+]
+
+function stepState(stepIndex: number, status: EnrichJob['status']): StepState {
+  const activeIndexMap: Partial<Record<EnrichJob['status'], number>> = {
+    pending: 0, parsing: 0, mapping: 1, generating: 2,
+  }
+  const active = activeIndexMap[status] ?? 0
+  if (stepIndex < active) return 'done'
+  if (stepIndex === active) return 'active'
+  return 'pending'
 }
 
 function ProcessingState({ status }: { status: EnrichJob['status'] }) {
   return (
-    <div className="flex flex-col items-center justify-center min-h-64 gap-4">
-      <Spinner />
-      <p className="text-sm text-gray-600">{STATUS_LABELS[status] ?? `Processing (${status})…`}</p>
+    <div className="flex flex-col items-start max-w-sm mx-auto min-h-64 justify-center gap-4 py-10">
+      {STEPS.map((step, i) => {
+        const state = stepState(i, status)
+        return (
+          <div key={step.label} className="flex items-center gap-3">
+            <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
+              {state === 'done' && (
+                <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+              {state === 'active' && (
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600" />
+              )}
+              {state === 'pending' && (
+                <div className="w-4 h-4 rounded-full border-2 border-gray-300" />
+              )}
+            </div>
+            <span className={`text-sm ${state === 'active' ? 'text-gray-900 font-medium' : state === 'done' ? 'text-gray-500' : 'text-gray-300'}`}>
+              {step.label}
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -64,11 +97,14 @@ function MappingState({
   onConfirm,
 }: {
   job: JobWithHeaders
-  onConfirm: (mapping: ColumnMapping) => Promise<void>
+  onConfirm: (mapping: ColumnMapping, hsTicketUrl: string) => Promise<void>
 }) {
   const [mapping, setMapping] = useState<ColumnMapping>(() => job.column_mapping!)
+  const [hsTicketUrl, setHsTicketUrl] = useState('')
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const hsTicketValid = hsTicketUrl.startsWith('https://app.hubspot.com/')
 
   const sourceHeaders = job.sourceHeaders ?? []
 
@@ -89,10 +125,14 @@ function MappingState({
   }
 
   async function handleConfirm() {
+    if (!hsTicketValid) {
+      setError('Enter a valid HubSpot ticket URL before confirming.')
+      return
+    }
     setConfirming(true)
     setError(null)
     try {
-      await onConfirm(mapping)
+      await onConfirm(mapping, hsTicketUrl)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
       setConfirming(false)
@@ -165,11 +205,28 @@ function MappingState({
         </div>
       )}
 
+      <div className="mb-6">
+        <h3 className="text-base font-semibold mb-1">HubSpot Ticket URL</h3>
+        <p className="text-sm text-gray-500 mb-2">
+          This URL will be applied to all rows in both output sheets.
+        </p>
+        <input
+          type="url"
+          value={hsTicketUrl}
+          onChange={(e) => setHsTicketUrl(e.target.value)}
+          placeholder="https://app.hubspot.com/contacts/..."
+          className="w-full max-w-lg rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        {hsTicketUrl.length > 0 && !hsTicketValid && (
+          <p className="mt-1 text-xs text-red-600">Must start with https://app.hubspot.com/</p>
+        )}
+      </div>
+
       {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
 
       <button
         onClick={handleConfirm}
-        disabled={confirming}
+        disabled={confirming || !hsTicketValid}
         className="rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {confirming ? 'Generating…' : 'Confirm and generate sheets'}
@@ -305,7 +362,7 @@ export default function JobDetailPage() {
     if (intervalRef.current) clearInterval(intervalRef.current)
 
     if (isProcessing) {
-      intervalRef.current = setInterval(fetchJob, 3000)
+      intervalRef.current = setInterval(fetchJob, 2000)
     }
 
     if (job.status === 'ready' || job.status === 'complete') {
@@ -317,11 +374,11 @@ export default function JobDetailPage() {
     }
   }, [job?.status, fetchJob, fetchRows])
 
-  async function handleConfirm(mapping: ColumnMapping) {
+  async function handleConfirm(mapping: ColumnMapping, hsTicketUrl: string) {
     const res = await fetch('/api/enrich/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId, columnMapping: mapping }),
+      body: JSON.stringify({ jobId, columnMapping: mapping, hs_ticket_url: hsTicketUrl }),
     })
     const json = await res.json()
     if (!res.ok) throw new Error(json.error ?? 'Failed to confirm mapping')

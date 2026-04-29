@@ -25,6 +25,7 @@ const columnMappingSchema = z.object({
 const bodySchema = z.object({
   jobId: z.string().uuid(),
   columnMapping: columnMappingSchema,
+  hs_ticket_url: z.string().min(1).startsWith('https://app.hubspot.com/'),
 })
 
 export async function POST(request: NextRequest) {
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: parsed.error.message }, { status: 400 })
   }
 
-  const { jobId, columnMapping } = parsed.data
+  const { jobId, columnMapping, hs_ticket_url } = parsed.data
 
   const job = await getJob(jobId)
   if (!job) {
@@ -67,11 +68,12 @@ export async function POST(request: NextRequest) {
     const rows = parseResult.data
     const insertRows: InsertEnrichRow[] = rows.map((row, rowIndex) => {
       const { teamSizeRow, zillowRow } = mapRowToBranches(row, columnMapping as ColumnMapping)
-      const hsTicket = teamSizeRow.HS_Ticket.trim() || `row-${rowIndex}`
+      teamSizeRow.HS_Ticket = hs_ticket_url
+      zillowRow.HS_ticket_link = hs_ticket_url
       return {
         job_id: jobId,
         row_index: rowIndex,
-        hs_ticket_url: hsTicket,
+        hs_ticket_url,
         raw_data: row,
         team_size_input: teamSizeRow,
         zillow_input: zillowRow,
