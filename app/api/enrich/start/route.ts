@@ -33,15 +33,17 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Invalid sheet URL' }, { status: 400 })
   }
 
-  const job = await createJob(sheetUrl)
-
+  let jobId: string | undefined
   try {
-    await updateJob(job.id, { status: 'parsing' })
+    const job = await createJob(sheetUrl)
+    jobId = job.id
+
+    await updateJob(jobId, { status: 'parsing' })
 
     const csvUrl = toExportUrl(sheetUrl)
     const res = await fetch(csvUrl)
     if (!res.ok) {
-      await updateJob(job.id, { status: 'failed', error_log: `CSV fetch failed: ${res.status}` })
+      await updateJob(jobId, { status: 'failed', error_log: `CSV fetch failed: ${res.status}` })
       return Response.json({ error: 'Failed to fetch sheet' }, { status: 500 })
     }
 
@@ -53,17 +55,17 @@ export async function POST(request: NextRequest) {
 
     const rows = parseResult.data
     if (rows.length === 0) {
-      await updateJob(job.id, { status: 'failed', error_log: 'Sheet is empty' })
+      await updateJob(jobId, { status: 'failed', error_log: 'Sheet is empty' })
       return Response.json({ error: 'Sheet is empty' }, { status: 400 })
     }
 
     const headers = Object.keys(rows[0])
 
-    await updateJob(job.id, { status: 'mapping', source_headers: headers })
+    await updateJob(jobId, { status: 'mapping', source_headers: headers })
 
     const columnMapping = await detectColumnMapping(headers)
 
-    await updateJob(job.id, {
+    await updateJob(jobId, {
       status: 'awaiting_confirmation',
       column_mapping: columnMapping,
       raw_row_count: rows.length,
@@ -71,7 +73,7 @@ export async function POST(request: NextRequest) {
 
     return Response.json({
       data: {
-        jobId: job.id,
+        jobId,
         rowCount: rows.length,
         columnMapping,
         status: 'awaiting_confirmation',
@@ -80,7 +82,9 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(message)
-    await updateJob(job.id, { status: 'failed', error_log: message })
-    return Response.json({ error: 'Internal server error' }, { status: 500 })
+    if (jobId) {
+      await updateJob(jobId, { status: 'failed', error_log: message }).catch(() => {})
+    }
+    return Response.json({ error: message }, { status: 500 })
   }
 }

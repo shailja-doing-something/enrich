@@ -61,14 +61,20 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sheetUrl }),
       })
-      const json = await res.json()
+      let json: { data?: { jobId: string }; error?: string }
+      try {
+        json = await res.json()
+      } catch {
+        setError(`Server error (status ${res.status}) — check Railway logs`)
+        return
+      }
       if (!res.ok) {
         setError(json.error ?? 'Something went wrong')
         return
       }
-      router.push(`/jobs/${json.data.jobId}`)
+      router.push(`/jobs/${json.data!.jobId}`)
     } catch {
-      setError('Network error — please try again')
+      setError('Network error — could not reach the server')
     } finally {
       setSubmitting(false)
     }
