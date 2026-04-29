@@ -37,7 +37,7 @@ export default function DashboardPage() {
     try {
       const res = await fetch('/api/enrich/jobs')
       const json = await res.json()
-      if (json.data) setJobs(json.data)
+      if (json.data) setJobs((json.data as EnrichJob[]).filter((j) => j.status !== 'failed'))
     } catch {
       // silent — polling will retry
     }
@@ -120,14 +120,14 @@ export default function DashboardPage() {
       </form>
 
       {jobs.length === 0 ? (
-        <p className="text-sm text-gray-500">No jobs yet. Paste a sheet URL above to get started.</p>
+        <p className="text-sm text-gray-500">No jobs yet. Upload a CSV file above to get started.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-200">
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Sheet URL</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">File</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Rows</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Action</th>
@@ -139,16 +139,10 @@ export default function DashboardPage() {
                   <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                     {new Date(job.created_at).toLocaleString()}
                   </td>
-                  <td className="px-4 py-3 max-w-xs">
-                    <a
-                      href={job.sheet_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:underline truncate block"
-                      title={job.sheet_url}
-                    >
-                      {truncate(job.sheet_url)}
-                    </a>
+                  <td className="px-4 py-3 max-w-xs text-gray-600 truncate" title={job.sheet_url}>
+                    {job.sheet_url.startsWith('https://')
+                      ? truncate(new URL(job.sheet_url).hostname, 40)
+                      : job.sheet_url}
                   </td>
                   <td className="px-4 py-3 text-gray-600">
                     {job.raw_row_count ?? '—'}

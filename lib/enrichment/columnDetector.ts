@@ -17,7 +17,7 @@ const EMPTY_FIELD: ColumnMappingField = { source_column: null, confidence: 'none
 
 export async function detectColumnMapping(sourceHeaders: string[]): Promise<ColumnMapping> {
   const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY)
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
 
   const fieldList = (Object.entries(TARGET_FIELDS) as [keyof ColumnMapping, string][])
     .map(([key, desc]) => `  - ${key}: ${desc}`)
