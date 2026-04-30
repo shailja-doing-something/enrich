@@ -6,19 +6,18 @@ import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField } from '@/
 
 type JobWithHeaders = EnrichJob & { sourceHeaders: string[] }
 
-const TARGET_FIELD_LABELS: Partial<Record<keyof ColumnMapping, string>> = {
-  list_name: 'Full Name',
-  list_email: 'Email',
-  list_phone: 'Phone',
-  list_team_name: 'Team Name',
-  list_brokerage: 'Brokerage',
-  list_website: 'Website',
-  list_location: 'Location',
+const TARGET_FIELD_LABELS: Record<keyof ColumnMapping, string> = {
+  name: 'Full Name',
+  email: 'Email',
+  phone: 'Phone',
+  team_name: 'Team Name',
+  brokerage: 'Brokerage',
+  website: 'Website',
+  location: 'Location',
 }
 
 const FIELD_ORDER: (keyof ColumnMapping)[] = [
-  'list_name', 'list_email', 'list_phone', 'list_team_name',
-  'list_brokerage', 'list_website', 'list_location',
+  'name', 'email', 'phone', 'team_name', 'brokerage', 'website', 'location',
 ]
 
 function ConfidenceBadge({ confidence }: { confidence: ColumnMappingField['confidence'] }) {
@@ -111,7 +110,7 @@ function MappingState({
   )
 
   const unmappedTargets = (Object.entries(mapping) as [keyof ColumnMapping, ColumnMappingField][])
-    .filter(([field, value]) => field !== 'HS_Ticket' && value.source_column === null)
+    .filter(([, value]) => value.source_column === null)
     .map(([field]) => field)
   const ignoredHeaders = sourceHeaders.filter((h) => !mappedSourceColumns.has(h))
 
@@ -212,8 +211,9 @@ function MappingState({
   )
 }
 
-const TEAM_SIZE_HEADERS = ['list_name', 'list_email', 'list_phone', 'list_team_name', 'list_brokerage', 'list_website', 'list_location', 'HS_Ticket']
-const ZILLOW_HEADERS = ['list_name', 'list_company', 'list_location', 'brokerage_name', 'list_mobile', 'list_email', 'HS_ticket_link']
+const FORMATTED_INPUT_HEADERS = [
+  'name', 'email', 'phone', 'team_name', 'brokerage', 'website', 'location', 'hs_ticket_url',
+]
 
 function downloadAsCSV(rows: Record<string, unknown>[], filename: string) {
   if (!rows || rows.length === 0) return
@@ -245,83 +245,43 @@ function ReadyState({ job, rows }: { job: JobWithHeaders; rows: EnrichRow[] }) {
   return (
     <div>
       <div className="mb-6">
-        <p className="text-green-700 font-medium">{rows.length} rows generated successfully</p>
+        <p className="text-green-700 font-medium">{rows.length} rows formatted successfully</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-semibold text-sm">Team Size Input ({rows.length} rows)</h3>
-            <button
-              onClick={() => downloadAsCSV(
-                rows.map(r => r.team_size_input).filter(Boolean) as Record<string, unknown>[],
-                `team-size-input-${job.id}.csv`
-              )}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Download Team Size CSV
-            </button>
-          </div>
-          <div className="overflow-x-auto rounded-lg border border-gray-200">
-            <table className="min-w-full divide-y divide-gray-200 text-xs">
-              <thead className="bg-gray-50">
-                <tr>
-                  {TEAM_SIZE_HEADERS.map((h) => (
-                    <th key={h} className="px-3 py-2 text-left font-medium text-gray-500 whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
-                {displayRows.map((row) => (
-                  <tr key={row.id}>
-                    {TEAM_SIZE_HEADERS.map((h) => (
-                      <td key={h} className="px-3 py-2 text-gray-600 max-w-xs truncate" title={row.team_size_input?.[h as keyof typeof row.team_size_input] ?? ''}>
-                        {row.team_size_input?.[h as keyof typeof row.team_size_input] || <span className="text-gray-300">—</span>}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-semibold text-sm">Formatted Input ({rows.length} rows)</h3>
+        <button
+          onClick={() => downloadAsCSV(
+            rows.map(r => r.formatted_input).filter(Boolean) as Record<string, unknown>[],
+            `formatted-input-${job.id}.csv`
+          )}
+          className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+        >
+          Download formatted CSV
+        </button>
+      </div>
 
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-semibold text-sm">Zillow Input ({rows.length} rows)</h3>
-            <button
-              onClick={() => downloadAsCSV(
-                rows.map(r => r.zillow_input).filter(Boolean) as Record<string, unknown>[],
-                `zillow-input-${job.id}.csv`
-              )}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Download Zillow CSV
-            </button>
-          </div>
-          <div className="overflow-x-auto rounded-lg border border-gray-200">
-            <table className="min-w-full divide-y divide-gray-200 text-xs">
-              <thead className="bg-gray-50">
-                <tr>
-                  {ZILLOW_HEADERS.map((h) => (
-                    <th key={h} className="px-3 py-2 text-left font-medium text-gray-500 whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
-                {displayRows.map((row) => (
-                  <tr key={row.id}>
-                    {ZILLOW_HEADERS.map((h) => (
-                      <td key={h} className="px-3 py-2 text-gray-600 max-w-xs truncate" title={row.zillow_input?.[h as keyof typeof row.zillow_input] ?? ''}>
-                        {row.zillow_input?.[h as keyof typeof row.zillow_input] || <span className="text-gray-300">—</span>}
-                      </td>
-                    ))}
-                  </tr>
+      <div className="overflow-x-auto rounded-lg border border-gray-200 mb-4">
+        <table className="min-w-full divide-y divide-gray-200 text-xs">
+          <thead className="bg-gray-50">
+            <tr>
+              {FORMATTED_INPUT_HEADERS.map((h) => (
+                <th key={h} className="px-3 py-2 text-left font-medium text-gray-500 whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 bg-white">
+            {displayRows.map((row) => (
+              <tr key={row.id}>
+                {FORMATTED_INPUT_HEADERS.map((h) => (
+                  <td key={h} className="px-3 py-2 text-gray-600 max-w-xs truncate" title={row.formatted_input?.[h as keyof typeof row.formatted_input] ?? ''}>
+                    {row.formatted_input?.[h as keyof typeof row.formatted_input] || <span className="text-gray-300">—</span>}
+                  </td>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {rows.length > 5 && (
@@ -335,7 +295,7 @@ function ReadyState({ job, rows }: { job: JobWithHeaders; rows: EnrichRow[] }) {
 
       <div className="text-xs text-gray-400 space-y-1 border-t border-gray-100 pt-4">
         <p>Created: {new Date(job.created_at).toLocaleString()}</p>
-        <p>Sheet: <a href={job.sheet_url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{job.sheet_url}</a></p>
+        <p>File: {job.sheet_url}</p>
         {job.parsed_at && <p>Confirmed at: {new Date(job.parsed_at).toLocaleString()}</p>}
       </div>
     </div>

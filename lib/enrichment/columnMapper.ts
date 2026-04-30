@@ -1,36 +1,23 @@
-import type { TeamSizeInput, ZillowInput, ColumnMapping } from '../supabase/types'
+import type { GenericFormattedRow, ColumnMapping } from '../supabase/types'
 
 function get(rawRow: Record<string, string>, sourceColumn: string | null): string {
   if (sourceColumn === null) return ''
   return rawRow[sourceColumn] ?? ''
 }
 
-export function mapRowToBranches(
+export function mapRowToGeneric(
   rawRow: Record<string, string>,
-  mapping: ColumnMapping
-): { teamSizeRow: TeamSizeInput; zillowRow: ZillowInput } {
-  // Field order matches the branch template specs exactly — do not reorder.
-  const teamSizeRow: TeamSizeInput = {
-    list_name:      get(rawRow, mapping.list_name.source_column),
-    list_email:     get(rawRow, mapping.list_email.source_column),
-    list_phone:     get(rawRow, mapping.list_phone.source_column),
-    list_team_name: get(rawRow, mapping.list_team_name.source_column),
-    list_brokerage: get(rawRow, mapping.list_brokerage.source_column),
-    list_website:   get(rawRow, mapping.list_website.source_column),
-    list_location:  get(rawRow, mapping.list_location.source_column),
-    HS_Ticket:      get(rawRow, mapping.HS_Ticket.source_column),
+  mapping: ColumnMapping,
+  hsTicketUrl: string
+): GenericFormattedRow {
+  return {
+    name:         get(rawRow, mapping.name.source_column),
+    email:        get(rawRow, mapping.email.source_column),
+    phone:        get(rawRow, mapping.phone.source_column),
+    team_name:    get(rawRow, mapping.team_name.source_column),
+    brokerage:    get(rawRow, mapping.brokerage.source_column),
+    website:      get(rawRow, mapping.website.source_column),
+    location:     get(rawRow, mapping.location.source_column),
+    hs_ticket_url: hsTicketUrl,
   }
-
-  // list_website is intentionally excluded. HS_ticket_link is overridden by caller.
-  const zillowRow: ZillowInput = {
-    list_name:      get(rawRow, mapping.list_name.source_column),
-    list_company:   get(rawRow, mapping.list_team_name.source_column),
-    list_location:  get(rawRow, mapping.list_location.source_column),
-    brokerage_name: get(rawRow, mapping.list_brokerage.source_column),
-    list_mobile:    get(rawRow, mapping.list_phone.source_column),
-    list_email:     get(rawRow, mapping.list_email.source_column),
-    HS_ticket_link: get(rawRow, mapping.HS_Ticket.source_column),
-  }
-
-  return { teamSizeRow, zillowRow }
 }

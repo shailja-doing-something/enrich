@@ -3,14 +3,13 @@ import { env } from '../env'
 import type { ColumnMapping, ColumnMappingField } from '../supabase/types'
 
 const TARGET_FIELDS: Record<keyof ColumnMapping, string> = {
-  list_name: "person's full name",
-  list_email: 'email address',
-  list_phone: 'phone or mobile number',
-  list_team_name: 'real estate team or group name',
-  list_brokerage: 'brokerage or franchise office name',
-  list_website: 'personal or team website URL',
-  list_location: 'city, state, or location',
-  HS_Ticket: 'HubSpot ticket URL — usually contains app.hubspot.com',
+  name: "person's full name",
+  email: 'email address',
+  phone: 'phone or mobile number',
+  team_name: 'real estate team or group name',
+  brokerage: 'brokerage or franchise office name',
+  website: 'personal or team website URL',
+  location: 'city, state, or location',
 }
 
 const EMPTY_FIELD: ColumnMappingField = { source_column: null, confidence: 'none' }
@@ -38,14 +37,13 @@ Rules:
 
 Return format (exactly matching this structure):
 {
-  "list_name": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
-  "list_email": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
-  "list_phone": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
-  "list_team_name": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
-  "list_brokerage": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
-  "list_website": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
-  "list_location": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
-  "HS_Ticket": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" }
+  "name": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
+  "email": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
+  "phone": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
+  "team_name": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
+  "brokerage": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
+  "website": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
+  "location": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" }
 }`
 
   let raw: string

@@ -9,14 +9,13 @@ const columnMappingFieldSchema = z.object({
 })
 
 const columnMappingSchema = z.object({
-  list_name: columnMappingFieldSchema,
-  list_email: columnMappingFieldSchema,
-  list_phone: columnMappingFieldSchema,
-  list_team_name: columnMappingFieldSchema,
-  list_brokerage: columnMappingFieldSchema,
-  list_website: columnMappingFieldSchema,
-  list_location: columnMappingFieldSchema,
-  HS_Ticket: columnMappingFieldSchema,
+  name: columnMappingFieldSchema,
+  email: columnMappingFieldSchema,
+  phone: columnMappingFieldSchema,
+  team_name: columnMappingFieldSchema,
+  brokerage: columnMappingFieldSchema,
+  website: columnMappingFieldSchema,
+  location: columnMappingFieldSchema,
 })
 
 const bodySchema = z.object({

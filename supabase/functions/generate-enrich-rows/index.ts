@@ -6,12 +6,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-const TARGET_FIELDS = [
-  'list_name', 'list_email', 'list_phone', 'list_team_name',
-  'list_brokerage', 'list_website', 'list_location', 'HS_Ticket'
-]
-
-function mapRowToBranches(
+function mapRowToGeneric(
   rawRow: Record<string, string>,
   mapping: Record<string, { source_column: string | null }>,
   hsTicketUrl: string
@@ -22,28 +17,16 @@ function mapRowToBranches(
     return rawRow[sourceCol] ?? ''
   }
 
-  const teamSizeRow = {
-    list_name: get('list_name'),
-    list_email: get('list_email'),
-    list_phone: get('list_phone'),
-    list_team_name: get('list_team_name'),
-    list_brokerage: get('list_brokerage'),
-    list_website: get('list_website'),
-    list_location: get('list_location'),
-    HS_Ticket: hsTicketUrl,
+  return {
+    name:          get('name'),
+    email:         get('email'),
+    phone:         get('phone'),
+    team_name:     get('team_name'),
+    brokerage:     get('brokerage'),
+    website:       get('website'),
+    location:      get('location'),
+    hs_ticket_url: hsTicketUrl,
   }
-
-  const zillowRow = {
-    list_name: get('list_name'),
-    list_company: get('list_team_name'),
-    list_location: get('list_location'),
-    brokerage_name: get('list_brokerage'),
-    list_mobile: get('list_phone'),
-    list_email: get('list_email'),
-    HS_ticket_link: hsTicketUrl,
-  }
-
-  return { teamSizeRow, zillowRow }
 }
 
 serve(async (req) => {
@@ -89,7 +72,6 @@ serve(async (req) => {
     )
   }
 
-  // Parse headers — handle quoted fields
   const parseCSVLine = (line: string): string[] => {
     const result: string[] = []
     let current = ''
@@ -112,7 +94,6 @@ serve(async (req) => {
   const headers = parseCSVLine(lines[0])
   const dataLines = lines.slice(1)
 
-  // Build rows
   const insertRows = []
   for (let i = 0; i < dataLines.length; i++) {
     const values = parseCSVLine(dataLines[i])
@@ -123,19 +104,15 @@ serve(async (req) => {
       rawRow[h] = values[idx] ?? ''
     })
 
-    const { teamSizeRow, zillowRow } = mapRowToBranches(rawRow, columnMapping, hsTicketUrl)
-
     insertRows.push({
       job_id: jobId,
       row_index: i,
       hs_ticket_url: hsTicketUrl,
       raw_data: rawRow,
-      team_size_input: teamSizeRow,
-      zillow_input: zillowRow,
+      formatted_input: mapRowToGeneric(rawRow, columnMapping, hsTicketUrl),
     })
   }
 
-  // Insert in batches of 50
   const BATCH_SIZE = 50
   try {
     for (let i = 0; i < insertRows.length; i += BATCH_SIZE) {
@@ -144,7 +121,6 @@ serve(async (req) => {
       if (error) throw new Error(`Batch insert failed at row ${i}: ${error.message}`)
     }
 
-    // Mark job ready
     await supabase
       .from('enrich_jobs')
       .update({
