@@ -1,5 +1,12 @@
 # Release Notes
 
+## [0.2.1] — 2026-05-02 — Cache fix for job status route
+
+### Fixed
+- `app/api/enrich/status/[jobId]/route.ts` — added `Cache-Control: no-store, no-cache, must-revalidate` to response headers; Railway CDN was serving stale job status despite client-side `cache: 'no-store'` on the fetch, causing the job detail page to show STATE B ("awaiting_confirmation") even after the job had already moved to "ready"
+
+---
+
 ## [0.2.0] — 2026-05-01 — Three-stage enrichment pipeline (mock)
 
 ### Added
