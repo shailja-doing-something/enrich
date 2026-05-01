@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField } from '@/lib/supabase/types'
 
@@ -167,10 +167,10 @@ function MappingState({
     setError(null)
     try {
       await onConfirm(mapping)
+      // success: keep disabled — polling handles the transition
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
-    } finally {
-      setConfirming(false)
+      setConfirming(false)  // re-enable only on error
     }
   }
 
@@ -556,61 +556,55 @@ export default function JobDetailPage() {
   const [starting, setStarting] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
 
-  const prevStatusRef = useRef<EnrichJob['status'] | null>(null)
-  const completePollRef = useRef(0)
-
-  const fetchRows = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/enrich/jobs/${jobId}/rows`)
-      const json = await res.json()
-      if (json.data) setRows(json.data)
-    } catch {
-      // silent — polling will retry
-    }
-  }, [jobId])
-
   useEffect(() => {
-    let interval: NodeJS.Timeout
+    let isMounted = true
+    let timeoutId: NodeJS.Timeout
+
+    const TERMINAL_STATES = ['complete', 'failed']
+
+    const fetchRows = async () => {
+      try {
+        const res = await fetch(`/api/enrich/jobs/${jobId}/rows`)
+        const json = await res.json()
+        if (isMounted && json.data) setRows(json.data)
+      } catch { /* silent */ }
+    }
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/enrich/status/${jobId}`)
-        if (res.status === 404) { setNotFound(true); clearInterval(interval); return }
-        if (!res.ok) return
+        const res = await fetch(
+          `/api/enrich/status/${jobId}`,
+          { cache: 'no-store' }
+        )
+        if (!res.ok) {
+          if (res.status === 404 && isMounted) setNotFound(true)
+          return
+        }
         const json = await res.json()
         const data = json.data as JobWithHeaders
-
-        const prevStatus = prevStatusRef.current
-        prevStatusRef.current = data.status
-        setJob(data)
-
-        // fetch rows when entering ready
-        if (data.status === 'ready' && prevStatus !== 'ready') {
-          fetchRows()
+        if (isMounted) {
+          setJob(data)
+          if (data.status === 'ready' || data.status === 'complete') {
+            fetchRows()
+          }
         }
-        // fetch rows when pipeline completes
-        if (data.status === 'complete' && prevStatus !== 'complete') {
-          completePollRef.current = 0
-          fetchRows()
+        if (isMounted && !TERMINAL_STATES.includes(data.status)) {
+          timeoutId = setTimeout(poll, 2000)
         }
-        // re-fetch rows every 3 polls during complete to catch late updates
-        if (data.status === 'complete' && prevStatus === 'complete') {
-          completePollRef.current++
-          if (completePollRef.current % 3 === 0) fetchRows()
+      } catch {
+        if (isMounted) {
+          timeoutId = setTimeout(poll, 3000)
         }
-
-        if (data.status === 'failed') {
-          clearInterval(interval)
-        }
-      } catch (e) {
-        console.error('Poll error:', e)
       }
     }
 
     poll()
-    interval = setInterval(poll, 2000)
-    return () => clearInterval(interval)
-  }, [jobId, fetchRows])
+
+    return () => {
+      isMounted = false
+      clearTimeout(timeoutId)
+    }
+  }, [jobId])
 
   async function handleConfirm(mapping: ColumnMapping) {
     const res = await fetch('/api/enrich/confirm', {
@@ -630,11 +624,11 @@ export default function JobDetailPage() {
       const json = await res.json()
       if (!res.ok) {
         setRunError(json.error ?? 'Failed to start enrichment')
+        setStarting(false)  // re-enable only on error
       }
-      // success: polling picks up the new status automatically
+      // success: keep disabled — polling handles the transition
     } catch {
       setRunError('Network error — could not start enrichment')
-    } finally {
       setStarting(false)
     }
   }
@@ -662,8 +656,22 @@ export default function JobDetailPage() {
     <main className="max-w-5xl mx-auto px-4 py-10">
       <a href="/" className="text-sm text-gray-500 hover:text-gray-700 mb-6 block">← Back to dashboard</a>
 
+      {job.status === 'failed' && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+          <h2 className="font-semibold text-red-800 mb-1">Job Failed</h2>
+          <p className="text-sm text-red-700 mb-3">{job.error_log ?? 'An unknown error occurred.'}</p>
+          <a href="/" className="inline-block rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
+            Start over
+          </a>
+        </div>
+      )}
+
       {job.status === 'complete' && (
         <CompleteState job={job} rows={rows} />
+      )}
+
+      {RUNNING_STATUSES.includes(job.status) && (
+        <PipelineRunningState job={job} />
       )}
 
       {job.status === 'ready' && (
@@ -676,26 +684,12 @@ export default function JobDetailPage() {
         />
       )}
 
-      {RUNNING_STATUSES.includes(job.status) && (
-        <PipelineRunningState job={job} />
-      )}
-
-      {(job.status === 'awaiting_confirmation' || job.status === 'generating') && job.column_mapping && (
+      {job.status === 'awaiting_confirmation' && job.column_mapping && (
         <MappingState job={job} onConfirm={handleConfirm} />
       )}
 
-      {(job.status === 'pending' || job.status === 'parsing' || job.status === 'mapping') && (
+      {(job.status === 'generating' || job.status === 'parsing' || job.status === 'mapping' || job.status === 'pending') && (
         <ProcessingState status={job.status} />
-      )}
-
-      {job.status === 'failed' && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-          <h2 className="font-semibold text-red-800 mb-1">Job Failed</h2>
-          <p className="text-sm text-red-700 mb-3">{job.error_log ?? 'An unknown error occurred.'}</p>
-          <a href="/" className="inline-block rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
-            Start over
-          </a>
-        </div>
       )}
     </main>
   )
