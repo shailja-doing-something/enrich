@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField } from '@/lib/supabase/types'
 
 type JobWithHeaders = EnrichJob & { sourceHeaders: string[] }
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 const TARGET_FIELD_LABELS: Record<keyof ColumnMapping, string> = {
   name: 'Full Name',
@@ -20,6 +22,31 @@ const FIELD_ORDER: (keyof ColumnMapping)[] = [
   'name', 'email', 'phone', 'team_name', 'brokerage', 'website', 'location',
 ]
 
+function downloadAsCSV(rows: Record<string, unknown>[], filename: string) {
+  if (!rows || rows.length === 0) return
+  const headers = Object.keys(rows[0])
+  const csvLines = [
+    headers.join(','),
+    ...rows.map(row =>
+      headers.map(h => {
+        const val = String(row[h] ?? '')
+        return val.includes(',') || val.includes('"') || val.includes('\n')
+          ? `"${val.replace(/"/g, '""')}"`
+          : val
+      }).join(',')
+    ),
+  ]
+  const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// ── Small components ──────────────────────────────────────────────────────────
+
 function ConfidenceBadge({ confidence }: { confidence: ColumnMappingField['confidence'] }) {
   const styles: Record<ColumnMappingField['confidence'], string> = {
     high: 'bg-green-100 text-green-800',
@@ -34,21 +61,41 @@ function ConfidenceBadge({ confidence }: { confidence: ColumnMappingField['confi
   )
 }
 
-function Spinner() {
+function EnrichmentStatusBadge({ status }: { status: EnrichRow['enrichment_status'] }) {
+  const styles: Record<EnrichRow['enrichment_status'], string> = {
+    found: 'bg-green-100 text-green-800',
+    not_found: 'bg-red-100 text-red-700',
+    pending: 'bg-gray-100 text-gray-500',
+  }
   return (
-    <div className="flex items-center justify-center min-h-64">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-    </div>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${styles[status]}`}>
+      {status.replace('_', ' ')}
+    </span>
   )
 }
 
-type StepState = 'pending' | 'active' | 'done'
+function Spinner({ small }: { small?: boolean }) {
+  const size = small ? 'h-4 w-4' : 'h-8 w-8'
+  return <div className={`animate-spin rounded-full ${size} border-b-2 border-blue-600`} />
+}
+
+function CheckIcon() {
+  return (
+    <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+    </svg>
+  )
+}
+
+// ── STATE A — Processing ──────────────────────────────────────────────────────
 
 const STEPS: { label: string; activeOn: EnrichJob['status'][] }[] = [
-  { label: 'Uploading CSV',         activeOn: ['pending', 'parsing'] },
-  { label: 'Detecting columns',     activeOn: ['mapping'] },
-  { label: 'Generating input sheets', activeOn: ['generating'] },
+  { label: 'Uploading CSV',            activeOn: ['pending', 'parsing'] },
+  { label: 'Detecting columns',        activeOn: ['mapping'] },
+  { label: 'Generating input sheets',  activeOn: ['generating'] },
 ]
+
+type StepState = 'pending' | 'active' | 'done'
 
 function stepState(stepIndex: number, status: EnrichJob['status']): StepState {
   const activeIndexMap: Partial<Record<EnrichJob['status'], number>> = {
@@ -68,17 +115,9 @@ function ProcessingState({ status }: { status: EnrichJob['status'] }) {
         return (
           <div key={step.label} className="flex items-center gap-3">
             <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
-              {state === 'done' && (
-                <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              )}
-              {state === 'active' && (
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600" />
-              )}
-              {state === 'pending' && (
-                <div className="w-4 h-4 rounded-full border-2 border-gray-300" />
-              )}
+              {state === 'done' && <CheckIcon />}
+              {state === 'active' && <Spinner small />}
+              {state === 'pending' && <div className="w-4 h-4 rounded-full border-2 border-gray-300" />}
             </div>
             <span className={`text-sm ${state === 'active' ? 'text-gray-900 font-medium' : state === 'done' ? 'text-gray-500' : 'text-gray-300'}`}>
               {step.label}
@@ -89,6 +128,8 @@ function ProcessingState({ status }: { status: EnrichJob['status'] }) {
     </div>
   )
 }
+
+// ── STATE B — Mapping ─────────────────────────────────────────────────────────
 
 function MappingState({
   job,
@@ -158,9 +199,7 @@ function MappingState({
                   <td className="px-4 py-3 text-gray-600">
                     {f.source_column ?? <span className="text-gray-400 italic">— not found —</span>}
                   </td>
-                  <td className="px-4 py-3">
-                    <ConfidenceBadge confidence={f.confidence} />
-                  </td>
+                  <td className="px-4 py-3"><ConfidenceBadge confidence={f.confidence} /></td>
                   <td className="px-4 py-3">
                     <select
                       value={f.source_column ?? ''}
@@ -184,9 +223,7 @@ function MappingState({
         <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
           <p className="text-sm font-medium text-yellow-800 mb-1">Will be blank in output:</p>
           <ul className="text-sm text-yellow-700 list-disc list-inside">
-            {unmappedTargets.map((f) => (
-              <li key={f}>{TARGET_FIELD_LABELS[f]}</li>
-            ))}
+            {unmappedTargets.map((f) => <li key={f}>{TARGET_FIELD_LABELS[f]}</li>)}
           </ul>
         </div>
       )}
@@ -211,34 +248,25 @@ function MappingState({
   )
 }
 
+// ── STATE C — Ready ───────────────────────────────────────────────────────────
+
 const FORMATTED_INPUT_HEADERS = [
   'name', 'email', 'phone', 'team_name', 'brokerage', 'website', 'location', 'hs_ticket_url',
 ]
 
-function downloadAsCSV(rows: Record<string, unknown>[], filename: string) {
-  if (!rows || rows.length === 0) return
-  const headers = Object.keys(rows[0])
-  const csvLines = [
-    headers.join(','),
-    ...rows.map(row =>
-      headers.map(h => {
-        const val = String(row[h] ?? '')
-        return val.includes(',') || val.includes('"') || val.includes('\n')
-          ? `"${val.replace(/"/g, '""')}"`
-          : val
-      }).join(',')
-    )
-  ]
-  const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-function ReadyState({ job, rows }: { job: JobWithHeaders; rows: EnrichRow[] }) {
+function ReadyState({
+  job,
+  rows,
+  onRunEnrichment,
+  starting,
+  runError,
+}: {
+  job: JobWithHeaders
+  rows: EnrichRow[]
+  onRunEnrichment: () => Promise<void>
+  starting: boolean
+  runError: string | null
+}) {
   const [expanded, setExpanded] = useState(false)
   const displayRows = expanded ? rows : rows.slice(0, 5)
 
@@ -248,8 +276,7 @@ function ReadyState({ job, rows }: { job: JobWithHeaders; rows: EnrichRow[] }) {
         <p className="text-green-700 font-medium">{rows.length} rows formatted successfully</p>
       </div>
 
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="font-semibold text-sm">Formatted Input ({rows.length} rows)</h3>
+      <div className="flex items-center gap-3 mb-6">
         <button
           onClick={() => downloadAsCSV(
             rows.map(r => r.formatted_input).filter(Boolean) as Record<string, unknown>[],
@@ -259,6 +286,20 @@ function ReadyState({ job, rows }: { job: JobWithHeaders; rows: EnrichRow[] }) {
         >
           Download formatted CSV
         </button>
+
+        <button
+          onClick={onRunEnrichment}
+          disabled={starting}
+          className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {starting ? 'Starting…' : 'Run Enrichment'}
+        </button>
+      </div>
+
+      {runError && <p className="text-sm text-red-600 mb-4">{runError}</p>}
+
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-semibold text-sm">Formatted Input ({rows.length} rows)</h3>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-gray-200 mb-4">
@@ -302,6 +343,208 @@ function ReadyState({ job, rows }: { job: JobWithHeaders; rows: EnrichRow[] }) {
   )
 }
 
+// ── STATE D — Pipeline running ────────────────────────────────────────────────
+
+const PIPELINE_STAGES: {
+  label: string
+  runningStatus: EnrichJob['status']
+  completedAtKey: keyof EnrichJob
+  foundCountKey: keyof EnrichJob
+}[] = [
+  {
+    label: 'Stage 1 — Zillow platform search',
+    runningStatus: 'stage1_running',
+    completedAtKey: 'stage1_completed_at',
+    foundCountKey: 'stage1_found_count',
+  },
+  {
+    label: 'Stage 2 — Database lookup',
+    runningStatus: 'stage2_running',
+    completedAtKey: 'stage2_completed_at',
+    foundCountKey: 'stage2_found_count',
+  },
+  {
+    label: 'Stage 3 — Scrape enrichment',
+    runningStatus: 'stage3_running',
+    completedAtKey: 'stage3_completed_at',
+    foundCountKey: 'stage3_found_count',
+  },
+]
+
+function PipelineRunningState({ job }: { job: EnrichJob }) {
+  const totalRows = job.raw_row_count ?? 0
+  const foundSoFar =
+    (job.stage1_found_count ?? 0) +
+    (job.stage2_found_count ?? 0) +
+    (job.stage3_found_count ?? 0)
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-2">Running enrichment pipeline</h2>
+      <p className="text-sm text-gray-500 mb-6">{totalRows} rows being processed</p>
+
+      <div className="space-y-4 mb-6">
+        {PIPELINE_STAGES.map((stage, i) => {
+          const isComplete = job[stage.completedAtKey] !== null
+          const isActive = job.status === stage.runningStatus
+          const foundCount = job[stage.foundCountKey] as number | null
+
+          return (
+            <div key={i} className="flex items-center gap-3">
+              <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
+                {isComplete && <CheckIcon />}
+                {isActive && <Spinner small />}
+                {!isComplete && !isActive && <div className="w-4 h-4 rounded-full border-2 border-gray-300" />}
+              </div>
+              <span className={`text-sm ${isActive ? 'text-gray-900 font-medium' : isComplete ? 'text-gray-500' : 'text-gray-300'}`}>
+                {stage.label}
+                {isComplete && (
+                  <span className="ml-2 text-green-600 font-medium">
+                    — {foundCount ?? 0} found
+                  </span>
+                )}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+
+      {foundSoFar > 0 && (
+        <p className="text-sm text-gray-500">{foundSoFar} found so far</p>
+      )}
+    </div>
+  )
+}
+
+// ── STATE E — Complete ────────────────────────────────────────────────────────
+
+function CompleteState({ job, rows }: { job: EnrichJob; rows: EnrichRow[] }) {
+  const [expanded, setExpanded] = useState(false)
+
+  const totalRows = job.raw_row_count ?? 0
+  const s1Found = job.stage1_found_count ?? 0
+  const s2Found = job.stage2_found_count ?? 0
+  const s3Found = job.stage3_found_count ?? 0
+  const notFound = totalRows - s1Found - s2Found - s3Found
+
+  const displayRows = expanded ? rows : rows.slice(0, 10)
+
+  function downloadEnrichedRows() {
+    const foundRows = rows.filter(r => r.enrichment_status === 'found' && r.enriched_data)
+    if (foundRows.length === 0) return
+    const allKeys = new Set<string>()
+    foundRows.forEach(r => Object.keys(r.enriched_data!).forEach(k => allKeys.add(k)))
+    const headers = Array.from(allKeys)
+    const csvData = foundRows.map(r => {
+      const row: Record<string, unknown> = {}
+      headers.forEach(k => { row[k] = r.enriched_data![k] ?? '' })
+      return row
+    })
+    downloadAsCSV(csvData, `enriched-found-${job.id}.csv`)
+  }
+
+  function downloadNotFoundRows() {
+    const nfRows = rows.filter(r => r.enrichment_status === 'not_found' && r.formatted_input)
+    if (nfRows.length === 0) return
+    downloadAsCSV(
+      nfRows.map(r => r.formatted_input as unknown as Record<string, unknown>),
+      `enriched-notfound-${job.id}.csv`
+    )
+  }
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-4">Enrichment complete</h2>
+
+      {/* Summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        {[
+          { label: 'Total rows', value: totalRows },
+          { label: 'Stage 1 found', value: s1Found },
+          { label: 'Stage 2 found', value: s2Found },
+          { label: 'Stage 3 found', value: s3Found },
+        ].map(({ label, value }) => (
+          <div key={label} className="rounded-lg border border-gray-200 p-3 text-center">
+            <p className="text-2xl font-semibold text-gray-900">{value}</p>
+            <p className="text-xs text-gray-500 mt-0.5">{label}</p>
+          </div>
+        ))}
+      </div>
+
+      {notFound > 0 && (
+        <p className="text-sm text-gray-500 mb-4">
+          {notFound} row{notFound !== 1 ? 's' : ''} not found after all stages
+        </p>
+      )}
+
+      {/* Downloads */}
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={downloadEnrichedRows}
+          className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+        >
+          Download enriched rows
+        </button>
+        <button
+          onClick={downloadNotFoundRows}
+          className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+        >
+          Download not found rows
+        </button>
+      </div>
+
+      {/* Results table */}
+      <div className="overflow-x-auto rounded-lg border border-gray-200 mb-3">
+        <table className="min-w-full divide-y divide-gray-200 text-xs">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium text-gray-500">Name</th>
+              <th className="px-3 py-2 text-left font-medium text-gray-500">Email</th>
+              <th className="px-3 py-2 text-left font-medium text-gray-500">Status</th>
+              <th className="px-3 py-2 text-left font-medium text-gray-500">Stage reached</th>
+              <th className="px-3 py-2 text-left font-medium text-gray-500">Source</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 bg-white">
+            {displayRows.map((row) => (
+              <tr key={row.id}>
+                <td className="px-3 py-2 text-gray-700 max-w-[160px] truncate">
+                  {row.formatted_input?.name || <span className="text-gray-300">—</span>}
+                </td>
+                <td className="px-3 py-2 text-gray-600 max-w-[200px] truncate">
+                  {row.formatted_input?.email || <span className="text-gray-300">—</span>}
+                </td>
+                <td className="px-3 py-2">
+                  <EnrichmentStatusBadge status={row.enrichment_status} />
+                </td>
+                <td className="px-3 py-2 text-gray-500">
+                  {row.stage_reached ?? '—'}
+                </td>
+                <td className="px-3 py-2 text-gray-500">
+                  {(row.enriched_data?.source as string | undefined) ?? '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {rows.length > 10 && (
+        <button
+          onClick={() => setExpanded(p => !p)}
+          className="text-sm text-blue-600 hover:underline"
+        >
+          {expanded ? 'Show fewer rows' : `View all ${rows.length} rows`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
+const RUNNING_STATUSES: EnrichJob['status'][] = ['stage1_running', 'stage2_running', 'stage3_running']
+
 export default function JobDetailPage() {
   const params = useParams()
   const jobId = params.jobId as string
@@ -309,6 +552,11 @@ export default function JobDetailPage() {
   const [job, setJob] = useState<JobWithHeaders | null>(null)
   const [rows, setRows] = useState<EnrichRow[]>([])
   const [notFound, setNotFound] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
+
+  const prevStatusRef = useRef<EnrichJob['status'] | null>(null)
+  const completePollRef = useRef(0)
 
   const fetchRows = useCallback(async () => {
     try {
@@ -316,13 +564,12 @@ export default function JobDetailPage() {
       const json = await res.json()
       if (json.data) setRows(json.data)
     } catch {
-      // silent
+      // silent — polling will retry
     }
   }, [jobId])
 
   useEffect(() => {
     let interval: NodeJS.Timeout
-    let rowsFetched = false
 
     const poll = async () => {
       try {
@@ -331,11 +578,26 @@ export default function JobDetailPage() {
         if (!res.ok) return
         const json = await res.json()
         const data = json.data as JobWithHeaders
+
+        const prevStatus = prevStatusRef.current
+        prevStatusRef.current = data.status
         setJob(data)
-        if (data.status === 'ready' || data.status === 'complete') {
-          if (!rowsFetched) { rowsFetched = true; fetchRows() }
-          clearInterval(interval)
+
+        // fetch rows when entering ready
+        if (data.status === 'ready' && prevStatus !== 'ready') {
+          fetchRows()
         }
+        // fetch rows when pipeline completes
+        if (data.status === 'complete' && prevStatus !== 'complete') {
+          completePollRef.current = 0
+          fetchRows()
+        }
+        // re-fetch rows every 3 polls during complete to catch late updates
+        if (data.status === 'complete' && prevStatus === 'complete') {
+          completePollRef.current++
+          if (completePollRef.current % 3 === 0) fetchRows()
+        }
+
         if (data.status === 'failed') {
           clearInterval(interval)
         }
@@ -346,7 +608,6 @@ export default function JobDetailPage() {
 
     poll()
     interval = setInterval(poll, 2000)
-
     return () => clearInterval(interval)
   }, [jobId, fetchRows])
 
@@ -358,6 +619,23 @@ export default function JobDetailPage() {
     })
     const json = await res.json()
     if (!res.ok) throw new Error(json.error ?? 'Failed to confirm mapping')
+  }
+
+  async function runEnrichment() {
+    setStarting(true)
+    setRunError(null)
+    try {
+      const res = await fetch(`/api/enrich/run/${jobId}`, { method: 'POST' })
+      const json = await res.json()
+      if (!res.ok) {
+        setRunError(json.error ?? 'Failed to start enrichment')
+      }
+      // success: polling picks up the new status automatically
+    } catch {
+      setRunError('Network error — could not start enrichment')
+    } finally {
+      setStarting(false)
+    }
   }
 
   if (notFound) {
@@ -372,7 +650,9 @@ export default function JobDetailPage() {
   if (!job) {
     return (
       <main className="max-w-5xl mx-auto px-4 py-10">
-        <Spinner />
+        <div className="flex items-center justify-center min-h-64">
+          <Spinner />
+        </div>
       </main>
     )
   }
@@ -391,16 +671,30 @@ export default function JobDetailPage() {
         </div>
       )}
 
-      {(job.status === 'ready' || job.status === 'complete') && (
-        <ReadyState job={job} rows={rows} />
+      {(job.status === 'pending' || job.status === 'parsing' || job.status === 'mapping' || job.status === 'generating') && (
+        <ProcessingState status={job.status} />
       )}
 
       {job.status === 'awaiting_confirmation' && job.column_mapping && (
         <MappingState job={job} onConfirm={handleConfirm} />
       )}
 
-      {(job.status === 'pending' || job.status === 'parsing' || job.status === 'mapping' || job.status === 'generating') && (
-        <ProcessingState status={job.status} />
+      {job.status === 'ready' && (
+        <ReadyState
+          job={job}
+          rows={rows}
+          onRunEnrichment={runEnrichment}
+          starting={starting}
+          runError={runError}
+        />
+      )}
+
+      {RUNNING_STATUSES.includes(job.status) && (
+        <PipelineRunningState job={job} />
+      )}
+
+      {job.status === 'complete' && (
+        <CompleteState job={job} rows={rows} />
       )}
     </main>
   )

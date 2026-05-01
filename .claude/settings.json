@@ -1,15 +1,16 @@
 {
   "hooks": {
-    "preCommit": {
-      "enabled": true,
-      "script": ".claude/hooks/pre-commit.sh",
-      "description": "Run tests and lint before every commit. Blocks on failure."
-    },
-    "lintOnSave": {
-      "enabled": false,
-      "script": ".claude/hooks/lint-on-save.sh",
-      "description": "Lint TypeScript files on save. Enable in your editor integration."
-    }
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pre-tool-use.sh"
+          }
+        ]
+      }
+    ]
   },
   "agents": {
     "codeReviewer": {
@@ -84,28 +85,28 @@
   },
   "permissions": {
     "allow": [
-      "npm run test",
-      "npm run lint",
-      "npm run build",
-      "npm run dev",
-      "gh issue view",
-      "gh pr create",
-      "git status",
-      "git diff",
-      "git log",
-      "git add",
-      "git commit",
-      "git checkout",
-      "git branch",
-      "npx supabase status"
+      "Bash(npm run test)",
+      "Bash(npm run lint)",
+      "Bash(npm run build)",
+      "Bash(npm run dev)",
+      "Bash(gh issue view*)",
+      "Bash(gh pr create*)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git checkout*)",
+      "Bash(git branch*)",
+      "Bash(npx supabase status)"
     ],
     "deny": [
-      "git push --force",
-      "git reset --hard",
-      "rm -rf",
-      "npx supabase db reset",
-      "DROP TABLE",
-      "DELETE FROM enrich_"
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(rm -rf*)",
+      "Bash(npx supabase db reset)",
+      "Bash(DROP TABLE*)",
+      "Bash(DELETE FROM enrich_*)"
     ]
   }
 }

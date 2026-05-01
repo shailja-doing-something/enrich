@@ -12,8 +12,20 @@ function StatusBadge({ status }: { status: EnrichJob['status'] }) {
   if (status === 'awaiting_confirmation') {
     return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">Needs review</span>
   }
-  if (status === 'ready' || status === 'complete') {
+  if (status === 'ready') {
     return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Ready</span>
+  }
+  if (status === 'stage1_running') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Stage 1</span>
+  }
+  if (status === 'stage2_running') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Stage 2</span>
+  }
+  if (status === 'stage3_running') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Stage 3</span>
+  }
+  if (status === 'complete') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-700 text-white">Complete</span>
   }
   if (status === 'failed') {
     return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Failed</span>
