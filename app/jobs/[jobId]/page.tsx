@@ -169,6 +169,7 @@ function MappingState({
       await onConfirm(mapping)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
       setConfirming(false)
     }
   }
@@ -661,22 +662,8 @@ export default function JobDetailPage() {
     <main className="max-w-5xl mx-auto px-4 py-10">
       <a href="/" className="text-sm text-gray-500 hover:text-gray-700 mb-6 block">← Back to dashboard</a>
 
-      {job.status === 'failed' && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-          <h2 className="font-semibold text-red-800 mb-1">Job Failed</h2>
-          <p className="text-sm text-red-700 mb-3">{job.error_log ?? 'An unknown error occurred.'}</p>
-          <a href="/" className="inline-block rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
-            Start over
-          </a>
-        </div>
-      )}
-
-      {(job.status === 'pending' || job.status === 'parsing' || job.status === 'mapping' || job.status === 'generating') && (
-        <ProcessingState status={job.status} />
-      )}
-
-      {job.status === 'awaiting_confirmation' && job.column_mapping && (
-        <MappingState job={job} onConfirm={handleConfirm} />
+      {job.status === 'complete' && (
+        <CompleteState job={job} rows={rows} />
       )}
 
       {job.status === 'ready' && (
@@ -693,8 +680,22 @@ export default function JobDetailPage() {
         <PipelineRunningState job={job} />
       )}
 
-      {job.status === 'complete' && (
-        <CompleteState job={job} rows={rows} />
+      {(job.status === 'awaiting_confirmation' || job.status === 'generating') && job.column_mapping && (
+        <MappingState job={job} onConfirm={handleConfirm} />
+      )}
+
+      {(job.status === 'pending' || job.status === 'parsing' || job.status === 'mapping') && (
+        <ProcessingState status={job.status} />
+      )}
+
+      {job.status === 'failed' && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+          <h2 className="font-semibold text-red-800 mb-1">Job Failed</h2>
+          <p className="text-sm text-red-700 mb-3">{job.error_log ?? 'An unknown error occurred.'}</p>
+          <a href="/" className="inline-block rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
+            Start over
+          </a>
+        </div>
       )}
     </main>
   )

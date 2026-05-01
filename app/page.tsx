@@ -51,7 +51,10 @@ export default function DashboardPage() {
 
   async function fetchJobs() {
     try {
-      const res = await fetch('/api/enrich/jobs')
+      const res = await fetch('/api/enrich/jobs', {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      })
       const json = await res.json()
       if (json.data) setJobs((json.data as EnrichJob[]).filter((j) => j.status !== 'failed'))
     } catch {

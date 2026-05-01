@@ -4,5 +4,5 @@ import { listJobs } from '@/lib/supabase/jobs'
 
 export async function GET() {
   const jobs = await listJobs()
-  return Response.json({ data: jobs })
+  return Response.json({ data: jobs }, { headers: { 'Cache-Control': 'no-store' } })
 }
