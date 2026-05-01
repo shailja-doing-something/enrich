@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import type { EnrichJob } from '@/lib/supabase/types'
 
@@ -47,8 +47,6 @@ export default function DashboardPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const hsTicketValid = hsTicketUrl.startsWith('https://app.hubspot.com/')
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
   async function fetchJobs() {
     try {
       const res = await fetch('/api/enrich/jobs', {
@@ -63,10 +61,21 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    fetchJobs()
-    intervalRef.current = setInterval(fetchJobs, 3000)
+    let isMounted = true
+    let timeoutId: NodeJS.Timeout
+
+    const poll = async () => {
+      await fetchJobs()
+      if (isMounted) {
+        timeoutId = setTimeout(poll, 3000)
+      }
+    }
+
+    poll()
+
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
+      isMounted = false
+      clearTimeout(timeoutId)
     }
   }, [])
 
@@ -78,6 +87,7 @@ export default function DashboardPage() {
       if (!res.ok) { setDeleteError(json.error ?? 'Delete failed'); return }
       setJobs((prev) => prev.filter((j) => j.id !== jobId))
       setDeleteError(null)
+      await fetchJobs()
     } catch {
       setDeleteError('Network error — could not delete job')
     }
