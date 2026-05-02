@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { getJob, updateJob } from '@/lib/supabase/jobs'
 import type { ColumnMapping } from '@/lib/supabase/types'
-import { env } from '@/lib/env'
 
 const columnMappingFieldSchema = z.object({
   source_column: z.string().nullable(),
@@ -44,12 +43,12 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  if (!job.hs_ticket_url) {
-    return Response.json({ error: 'HubSpot ticket URL missing from job. Please start over.' }, { status: 400 })
-  }
-
   if (!job.raw_csv) {
     return Response.json({ error: 'Raw CSV missing from job. Please start over.' }, { status: 400 })
+  }
+
+  if (!job.hs_ticket_url) {
+    return Response.json({ error: 'HubSpot ticket URL missing from job. Please start over.' }, { status: 400 })
   }
 
   await updateJob(jobId, {
@@ -58,25 +57,9 @@ export async function POST(request: NextRequest) {
     status: 'generating',
   })
 
-  const edgeFunctionUrl = `${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-enrich-rows`
-
-  const response = NextResponse.json({ data: { jobId, status: 'generating' } })
-
-  fetch(edgeFunctionUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-    },
-    body: JSON.stringify({
-      jobId: job.id,
-      columnMapping,
-      hsTicketUrl: job.hs_ticket_url,
-      rawCsv: job.raw_csv,
-    }),
-  }).catch(err => {
-    console.error('Edge function call failed:', err)
+  return Response.json({
+    jobId,
+    status: 'generating',
+    executeUrl: '/api/enrich/confirm/execute',
   })
-
-  return response
 }

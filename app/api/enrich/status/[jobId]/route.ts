@@ -25,6 +25,9 @@ export async function GET(
   const sourceHeaders: string[] = job.source_headers ?? []
 
   return Response.json({ ...job, sourceHeaders }, {
-    headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
+    headers: {
+      'Cache-Control': 'no-store, no-cache',
+      'Pragma': 'no-cache',
+    },
   })
 }

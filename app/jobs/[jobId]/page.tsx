@@ -134,9 +134,11 @@ function ProcessingState({ status }: { status: EnrichJob['status'] }) {
 function MappingState({
   job,
   jobId,
+  setJob,
 }: {
   job: JobWithHeaders
   jobId: string
+  setJob: (fn: (prev: JobWithHeaders | null) => JobWithHeaders | null) => void
 }) {
   const [mapping, setMapping] = useState<ColumnMapping>(() => job.column_mapping!)
   const [confirming, setConfirming] = useState(false)
@@ -166,20 +168,40 @@ function MappingState({
     if (confirming) return
     setConfirming(true)
     setConfirmError(null)
+
     try {
-      const res = await fetch('/api/enrich/confirm', {
+      // CALL 1: prepare — fast DB update only, guaranteed < 500ms
+      const prepareRes = await fetch('/api/enrich/confirm/prepare', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobId, columnMapping: mapping }),
       })
-      if (!res.ok) {
-        const err = await res.json()
+
+      if (!prepareRes.ok) {
+        const err = await prepareRes.json()
         setConfirmError(err.error || 'Confirmation failed')
         setConfirming(false)
         return
       }
-      // SUCCESS — do NOT setConfirming(false)
-      // polling handles the transition automatically
+
+      // CALL 1 succeeded — update local state immediately so UI transitions now
+      setJob(prev => prev ? { ...prev, status: 'generating' } : prev)
+
+      // CALL 2: execute — truly fire-and-forget, client does not wait
+      const executeBody = JSON.stringify({ jobId })
+      if (navigator.sendBeacon) {
+        const blob = new Blob([executeBody], { type: 'application/json' })
+        navigator.sendBeacon('/api/enrich/confirm/execute', blob)
+      } else {
+        fetch('/api/enrich/confirm/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: executeBody,
+          keepalive: true,
+        }).catch(() => {})
+      }
+
+      // Do NOT setConfirming(false) — polling handles the transition
     } catch {
       setConfirmError('Network error. Please try again.')
       setConfirming(false)
@@ -269,19 +291,61 @@ const FORMATTED_INPUT_HEADERS = [
 
 function ReadyState({
   job,
+  jobId,
   rows,
-  onRunEnrichment,
-  starting,
-  runError,
+  setJob,
 }: {
   job: JobWithHeaders
+  jobId: string
   rows: EnrichRow[]
-  onRunEnrichment: () => Promise<void>
-  starting: boolean
-  runError: string | null
+  setJob: (fn: (prev: JobWithHeaders | null) => JobWithHeaders | null) => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
   const displayRows = expanded ? rows : rows.slice(0, 5)
+
+  async function runEnrichment() {
+    if (starting) return
+    setStarting(true)
+    setRunError(null)
+
+    try {
+      // CALL 1: trigger — fast DB update only
+      const triggerRes = await fetch(`/api/enrich/run/${jobId}/trigger`, {
+        method: 'POST',
+      })
+
+      if (!triggerRes.ok) {
+        const err = await triggerRes.json()
+        setRunError(err.error || 'Failed to start enrichment')
+        setStarting(false)
+        return
+      }
+
+      // CALL 1 succeeded — update local state immediately
+      setJob(prev => prev ? { ...prev, status: 'stage1_running' } : prev)
+
+      // CALL 2: fire — truly fire-and-forget
+      const fireBody = JSON.stringify({ jobId })
+      if (navigator.sendBeacon) {
+        const blob = new Blob([fireBody], { type: 'application/json' })
+        navigator.sendBeacon(`/api/enrich/run/${jobId}/fire`, blob)
+      } else {
+        fetch(`/api/enrich/run/${jobId}/fire`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: fireBody,
+          keepalive: true,
+        }).catch(() => {})
+      }
+
+      // Do NOT setStarting(false) — polling handles the transition
+    } catch {
+      setRunError('Network error — could not start enrichment')
+      setStarting(false)
+    }
+  }
 
   return (
     <div>
@@ -301,7 +365,7 @@ function ReadyState({
         </button>
 
         <button
-          onClick={onRunEnrichment}
+          onClick={runEnrichment}
           disabled={starting}
           className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -562,8 +626,6 @@ export default function JobDetailPage() {
   const [job, setJob] = useState<JobWithHeaders | null>(null)
   const [rows, setRows] = useState<EnrichRow[]>([])
   const [notFound, setNotFound] = useState(false)
-  const [starting, setStarting] = useState(false)
-  const [runError, setRunError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!jobId) return
@@ -608,23 +670,6 @@ export default function JobDetailPage() {
       .catch(() => {})
   }, [jobStatus, jobId])
 
-  async function runEnrichment() {
-    setStarting(true)
-    setRunError(null)
-    try {
-      const res = await fetch(`/api/enrich/run/${jobId}`, { method: 'POST' })
-      const json = await res.json()
-      if (!res.ok) {
-        setRunError(json.error ?? 'Failed to start enrichment')
-        setStarting(false)
-      }
-      // success: keep disabled — polling handles the transition
-    } catch {
-      setRunError('Network error — could not start enrichment')
-      setStarting(false)
-    }
-  }
-
   if (notFound) {
     return (
       <main className="max-w-5xl mx-auto px-4 py-10">
@@ -667,17 +712,11 @@ export default function JobDetailPage() {
       )}
 
       {job.status === 'ready' && (
-        <ReadyState
-          job={job}
-          rows={rows}
-          onRunEnrichment={runEnrichment}
-          starting={starting}
-          runError={runError}
-        />
+        <ReadyState job={job} jobId={jobId} rows={rows} setJob={setJob} />
       )}
 
       {job.status === 'awaiting_confirmation' && job.column_mapping && (
-        <MappingState job={job} jobId={jobId} />
+        <MappingState job={job} jobId={jobId} setJob={setJob} />
       )}
 
       {job.status === 'generating' && (
