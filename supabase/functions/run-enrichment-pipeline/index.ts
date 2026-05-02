@@ -293,7 +293,7 @@ serve(async (req) => {
     )
   }
 
-  if (job.status !== 'ready') {
+  if (job.status !== 'ready' && job.status !== 'stage1_running') {
     return new Response(
       JSON.stringify({ error: `Job is not ready (current status: ${job.status})` }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
