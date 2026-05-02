@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField } from '@/lib/supabase/types'
 
 type JobWithHeaders = EnrichJob & { sourceHeaders: string[] }
@@ -140,9 +140,24 @@ function MappingState({
   jobId: string
   setJob: (fn: (prev: JobWithHeaders | null) => JobWithHeaders | null) => void
 }) {
+  const router = useRouter()
   const [mapping, setMapping] = useState<ColumnMapping>(() => job.column_mapping!)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
+
+  if (job.mapping_confirmed || job.status !== 'awaiting_confirmation') {
+    return (
+      <div>
+        <p className="text-sm text-gray-500 mb-4">Sheets already generated.</p>
+        <button
+          onClick={() => router.push('/')}
+          className="text-sm text-blue-600 hover:underline"
+        >
+          Back to dashboard
+        </button>
+      </div>
+    )
+  }
 
   const sourceHeaders = job.sourceHeaders ?? []
 
@@ -185,7 +200,7 @@ function MappingState({
       }
 
       // CALL 1 succeeded — update local state immediately so UI transitions now
-      setJob(prev => prev ? { ...prev, status: 'generating' } : prev)
+      setJob(prev => prev ? { ...prev, status: 'generating', mapping_confirmed: true } : prev)
 
       // CALL 2: execute — truly fire-and-forget, client does not wait
       const executeBody = JSON.stringify({ jobId })
@@ -689,48 +704,30 @@ export default function JobDetailPage() {
     )
   }
 
-  return (
-    <main className="max-w-5xl mx-auto px-4 py-10">
-      <a href="/" className="text-sm text-gray-500 hover:text-gray-700 mb-6 block">← Back to dashboard</a>
-
-      {job.status === 'failed' && (
+  function renderContent(j: JobWithHeaders) {
+    if (j.status === 'failed') {
+      return (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4">
           <h2 className="font-semibold text-red-800 mb-1">Job Failed</h2>
-          <p className="text-sm text-red-700 mb-3">{job.error_log ?? 'An unknown error occurred.'}</p>
+          <p className="text-sm text-red-700 mb-3">{j.error_log ?? 'An unknown error occurred.'}</p>
           <a href="/" className="inline-block rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
             Start over
           </a>
         </div>
-      )}
+      )
+    }
+    if (j.status === 'complete') return <CompleteState job={j} rows={rows} />
+    if (RUNNING_STATUSES.includes(j.status)) return <PipelineRunningState job={j} />
+    if (j.status === 'ready') return <ReadyState job={j} jobId={jobId} rows={rows} setJob={setJob} />
+    if (j.status === 'generating') return <ProcessingState status={j.status} />
+    if (j.status === 'awaiting_confirmation') return <MappingState job={j} jobId={jobId} setJob={setJob} />
+    return <ProcessingState status={j.status} />
+  }
 
-      {job.status === 'complete' && (
-        <CompleteState job={job} rows={rows} />
-      )}
-
-      {RUNNING_STATUSES.includes(job.status) && (
-        <PipelineRunningState job={job} />
-      )}
-
-      {job.status === 'ready' && (
-        <ReadyState job={job} jobId={jobId} rows={rows} setJob={setJob} />
-      )}
-
-      {job.status === 'awaiting_confirmation' && job.column_mapping && (
-        <MappingState job={job} jobId={jobId} setJob={setJob} />
-      )}
-
-      {job.status === 'generating' && (
-        <ProcessingState status={job.status} />
-      )}
-
-      {job.status !== 'failed' &&
-       job.status !== 'complete' &&
-       !RUNNING_STATUSES.includes(job.status) &&
-       job.status !== 'ready' &&
-       job.status !== 'awaiting_confirmation' &&
-       job.status !== 'generating' && (
-        <ProcessingState status={job.status} />
-      )}
+  return (
+    <main className="max-w-5xl mx-auto px-4 py-10">
+      <a href="/" className="text-sm text-gray-500 hover:text-gray-700 mb-6 block">← Back to dashboard</a>
+      {job && renderContent(job)}
     </main>
   )
 }
