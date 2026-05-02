@@ -1,5 +1,13 @@
 # Release Notes
 
+## [0.2.2] — 2026-05-03 — Delete race condition fix
+
+### Fixed
+- `app/page.tsx` — polling now pauses while a delete is in flight using `deletingIdsRef` (ref readable inside closures without stale values); prevents the deleted job from re-appearing in the list when the next poll fires before the DB deletion completes
+- `app/api/enrich/jobs/[jobId]/route.ts` — DELETE handler wrapped in try/catch with `console.error` logging; success response now returns `{ data: { deleted: true } }` with `Cache-Control: no-store` header
+
+---
+
 ## [0.2.1] — 2026-05-02 — Cache fix for job status route
 
 ### Fixed
