@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getJob, updateJob } from '@/lib/supabase/jobs'
 import type { ColumnMapping } from '@/lib/supabase/types'
+import { env } from '@/lib/env'
 
 const columnMappingFieldSchema = z.object({
   source_column: z.string().nullable(),
@@ -57,13 +58,15 @@ export async function POST(request: NextRequest) {
     status: 'generating',
   })
 
-  const edgeFunctionUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-enrich-rows`
+  const edgeFunctionUrl = `${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-enrich-rows`
+
+  const response = NextResponse.json({ data: { jobId, status: 'generating' } })
 
   fetch(edgeFunctionUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
     },
     body: JSON.stringify({
       jobId: job.id,
@@ -75,5 +78,5 @@ export async function POST(request: NextRequest) {
     console.error('Edge function call failed:', err)
   })
 
-  return NextResponse.json({ data: { jobId, status: 'generating' } })
+  return response
 }

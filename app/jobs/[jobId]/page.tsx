@@ -133,14 +133,14 @@ function ProcessingState({ status }: { status: EnrichJob['status'] }) {
 
 function MappingState({
   job,
-  onConfirm,
+  jobId,
 }: {
   job: JobWithHeaders
-  onConfirm: (mapping: ColumnMapping) => Promise<void>
+  jobId: string
 }) {
   const [mapping, setMapping] = useState<ColumnMapping>(() => job.column_mapping!)
   const [confirming, setConfirming] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
 
   const sourceHeaders = job.sourceHeaders ?? []
 
@@ -163,14 +163,26 @@ function MappingState({
   }
 
   async function handleConfirm() {
+    if (confirming) return
     setConfirming(true)
-    setError(null)
+    setConfirmError(null)
     try {
-      await onConfirm(mapping)
-      // success: keep disabled — polling handles the transition
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
-      setConfirming(false)  // re-enable only on error
+      const res = await fetch('/api/enrich/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId, columnMapping: mapping }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        setConfirmError(err.error || 'Confirmation failed')
+        setConfirming(false)
+        return
+      }
+      // SUCCESS — do NOT setConfirming(false)
+      // polling handles the transition automatically
+    } catch {
+      setConfirmError('Network error. Please try again.')
+      setConfirming(false)
     }
   }
 
@@ -236,7 +248,7 @@ function MappingState({
         </div>
       )}
 
-      {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
+      {confirmError && <p className="text-sm text-red-600 mb-4">{confirmError}</p>}
 
       <button
         onClick={handleConfirm}
@@ -457,7 +469,6 @@ function CompleteState({ job, rows }: { job: EnrichJob; rows: EnrichRow[] }) {
     <div>
       <h2 className="text-lg font-semibold mb-4">Enrichment complete</h2>
 
-      {/* Summary */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         {[
           { label: 'Total rows', value: totalRows },
@@ -478,7 +489,6 @@ function CompleteState({ job, rows }: { job: EnrichJob; rows: EnrichRow[] }) {
         </p>
       )}
 
-      {/* Downloads */}
       <div className="flex items-center gap-3 mb-6">
         <button
           onClick={downloadEnrichedRows}
@@ -494,7 +504,6 @@ function CompleteState({ job, rows }: { job: EnrichJob; rows: EnrichRow[] }) {
         </button>
       </div>
 
-      {/* Results table */}
       <div className="overflow-x-auto rounded-lg border border-gray-200 mb-3">
         <table className="min-w-full divide-y divide-gray-200 text-xs">
           <thead className="bg-gray-50">
@@ -557,18 +566,11 @@ export default function JobDetailPage() {
   const [runError, setRunError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!jobId) return
     let isMounted = true
     let timeoutId: NodeJS.Timeout
 
-    const TERMINAL_STATES = ['complete', 'failed']
-
-    const fetchRows = async () => {
-      try {
-        const res = await fetch(`/api/enrich/jobs/${jobId}/rows`)
-        const json = await res.json()
-        if (isMounted && json.data) setRows(json.data)
-      } catch { /* silent */ }
-    }
+    const TERMINAL = ['complete', 'failed']
 
     const poll = async () => {
       try {
@@ -580,41 +582,31 @@ export default function JobDetailPage() {
           if (res.status === 404 && isMounted) setNotFound(true)
           return
         }
-        const json = await res.json()
-        const data = json.data as JobWithHeaders
-        if (isMounted) {
-          setJob(data)
-          if (data.status === 'ready' || data.status === 'complete') {
-            fetchRows()
-          }
-        }
-        if (isMounted && !TERMINAL_STATES.includes(data.status)) {
+        const data = await res.json()
+        if (isMounted) setJob(data)
+        if (isMounted && !TERMINAL.includes(data.status)) {
           timeoutId = setTimeout(poll, 2000)
         }
       } catch {
-        if (isMounted) {
-          timeoutId = setTimeout(poll, 3000)
-        }
+        if (isMounted) timeoutId = setTimeout(poll, 3000)
       }
     }
 
     poll()
-
     return () => {
       isMounted = false
       clearTimeout(timeoutId)
     }
   }, [jobId])
 
-  async function handleConfirm(mapping: ColumnMapping) {
-    const res = await fetch('/api/enrich/confirm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId, columnMapping: mapping }),
-    })
-    const json = await res.json()
-    if (!res.ok) throw new Error(json.error ?? 'Failed to confirm mapping')
-  }
+  const jobStatus = job?.status
+  useEffect(() => {
+    if (jobStatus !== 'ready' && jobStatus !== 'complete') return
+    fetch(`/api/enrich/jobs/${jobId}/rows`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(json => { if (json.data) setRows(json.data) })
+      .catch(() => {})
+  }, [jobStatus, jobId])
 
   async function runEnrichment() {
     setStarting(true)
@@ -624,7 +616,7 @@ export default function JobDetailPage() {
       const json = await res.json()
       if (!res.ok) {
         setRunError(json.error ?? 'Failed to start enrichment')
-        setStarting(false)  // re-enable only on error
+        setStarting(false)
       }
       // success: keep disabled — polling handles the transition
     } catch {
@@ -685,10 +677,19 @@ export default function JobDetailPage() {
       )}
 
       {job.status === 'awaiting_confirmation' && job.column_mapping && (
-        <MappingState job={job} onConfirm={handleConfirm} />
+        <MappingState job={job} jobId={jobId} />
       )}
 
-      {(job.status === 'generating' || job.status === 'parsing' || job.status === 'mapping' || job.status === 'pending') && (
+      {job.status === 'generating' && (
+        <ProcessingState status={job.status} />
+      )}
+
+      {job.status !== 'failed' &&
+       job.status !== 'complete' &&
+       !RUNNING_STATUSES.includes(job.status) &&
+       job.status !== 'ready' &&
+       job.status !== 'awaiting_confirmation' &&
+       job.status !== 'generating' && (
         <ProcessingState status={job.status} />
       )}
     </main>
