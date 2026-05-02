@@ -1,19 +1,16 @@
-import { NextRequest } from 'next/server'
-import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/supabase/client'
 
 export async function DELETE(
-  _request: NextRequest,
+  _request: Request,
   { params }: { params: Promise<{ jobId: string }> }
 ) {
-  const { jobId: rawJobId } = await params
-  const parsed = z.string().uuid().safeParse(rawJobId)
-  if (!parsed.success) {
-    return Response.json({ error: 'Invalid job ID' }, { status: 400 })
-  }
-  const jobId = parsed.data
-
   try {
+    const { jobId } = await params
+
+    if (!jobId) {
+      return Response.json({ error: 'Job ID required' }, { status: 400 })
+    }
+
     const { error: rowsError } = await supabaseAdmin
       .from('enrich_rows')
       .delete()
@@ -34,11 +31,11 @@ export async function DELETE(
       return Response.json({ error: jobError.message }, { status: 500 })
     }
 
-    return Response.json({ data: { deleted: true } }, {
+    return Response.json({ success: true }, {
       headers: { 'Cache-Control': 'no-store' },
     })
   } catch (e) {
     console.error('Delete handler error:', e)
-    return Response.json({ error: 'Unexpected error during delete' }, { status: 500 })
+    return Response.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

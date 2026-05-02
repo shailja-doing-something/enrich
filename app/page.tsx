@@ -104,7 +104,7 @@ export default function DashboardPage() {
     addDeleting(jobId)
 
     try {
-      const res = await fetch(`/api/enrich/jobs/${jobId}`, {
+      const res = await fetch(`/api/enrich/delete/${jobId}`, {
         method: 'DELETE',
         cache: 'no-store',
       })
