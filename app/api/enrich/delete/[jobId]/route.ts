@@ -11,6 +11,8 @@ export async function DELETE(
       return Response.json({ error: 'Job ID required' }, { status: 400 })
     }
 
+    console.log('[DELETE] Attempting to delete job:', jobId)
+
     const { error: rowsError } = await supabaseAdmin
       .from('enrich_rows')
       .delete()
@@ -31,6 +33,7 @@ export async function DELETE(
       return Response.json({ error: jobError.message }, { status: 500 })
     }
 
+    console.log('[DELETE] Successfully deleted job:', jobId)
     return Response.json({ success: true }, {
       headers: { 'Cache-Control': 'no-store' },
     })

@@ -66,7 +66,8 @@ export default function DashboardPage() {
         headers: { 'Cache-Control': 'no-cache' },
       })
       const json = await res.json()
-      if (json.data) setJobs((json.data as EnrichJob[]).filter((j) => j.status !== 'failed'))
+      const jobs = json.data ?? json ?? []
+      setJobs((jobs as EnrichJob[]).filter((j) => j.status !== 'failed'))
     } catch {
       // silent — polling will retry
     }
@@ -78,7 +79,7 @@ export default function DashboardPage() {
 
     const poll = async () => {
       if (deletingIdsRef.current.size > 0) {
-        if (isMounted) timeoutId = setTimeout(poll, 3000)
+        if (isMounted) timeoutId = setTimeout(poll, 1000)
         return
       }
       await fetchJobs()
@@ -101,27 +102,21 @@ export default function DashboardPage() {
     )
     if (!confirmed) return
 
+    setJobs(prev => prev.filter(j => j.id !== jobId))
     addDeleting(jobId)
 
     try {
-      const res = await fetch(`/api/enrich/delete/${jobId}`, {
-        method: 'DELETE',
-        cache: 'no-store',
-      })
+      const res = await fetch(`/api/enrich/delete/${jobId}`, { method: 'DELETE' })
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         alert(err.error || 'Delete failed. Please try again.')
-        removeDeleting(jobId)
-        return
+        await fetchJobs()
       }
-
-      setJobs(prev => prev.filter(j => j.id !== jobId))
-      removeDeleting(jobId)
-
-    } catch (e) {
-      console.error('Delete error:', e)
-      alert('Delete failed. Please try again.')
+    } catch {
+      alert('Network error. Please try again.')
+      await fetchJobs()
+    } finally {
       removeDeleting(jobId)
     }
   }
