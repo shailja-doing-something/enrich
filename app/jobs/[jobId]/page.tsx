@@ -141,7 +141,7 @@ function MappingState({
   setJob: (fn: (prev: JobWithHeaders | null) => JobWithHeaders | null) => void
 }) {
   const router = useRouter()
-  const [mapping, setMapping] = useState<ColumnMapping>(() => job.column_mapping!)
+  const [mapping, setMapping] = useState<ColumnMapping | null>(() => job.column_mapping ?? null)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
 
@@ -155,6 +155,15 @@ function MappingState({
         >
           Back to dashboard
         </button>
+      </div>
+    )
+  }
+
+  if (!mapping) {
+    return (
+      <div>
+        <p className="text-sm text-red-600 mb-2">Column mapping data is missing. Please go back and upload the file again.</p>
+        <a href="/" className="text-sm text-blue-600 hover:underline">← Back to dashboard</a>
       </div>
     )
   }
@@ -173,18 +182,25 @@ function MappingState({
   const ignoredHeaders = sourceHeaders.filter((h) => !mappedSourceColumns.has(h))
 
   function updateField(field: keyof ColumnMapping, sourceColumn: string | null) {
-    setMapping((prev) => ({
-      ...prev,
-      [field]: { ...prev[field], source_column: sourceColumn },
-    }))
+    setMapping((prev) => {
+      if (!prev) return prev
+      return { ...prev, [field]: { ...prev[field], source_column: sourceColumn } }
+    })
   }
 
   async function handleConfirm() {
+    console.log('handleConfirm called', { jobId, confirming })
     if (confirming) return
     setConfirming(true)
     setConfirmError(null)
 
     try {
+      if (!mapping) {
+        setConfirmError('Column mapping is missing. Please refresh and try again.')
+        setConfirming(false)
+        return
+      }
+
       // CALL 1: prepare — fast DB update only, guaranteed < 500ms
       const prepareRes = await fetch('/api/enrich/confirm/prepare', {
         method: 'POST',
@@ -217,8 +233,9 @@ function MappingState({
       }
 
       // Do NOT setConfirming(false) — polling handles the transition
-    } catch {
-      setConfirmError('Network error. Please try again.')
+    } catch (e) {
+      console.error('handleConfirm error:', e)
+      setConfirmError(String(e))
       setConfirming(false)
     }
   }
