@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import type { EnrichJob } from '@/lib/supabase/types'
 
@@ -44,9 +44,21 @@ export default function DashboardPage() {
   const [hsTicketUrl, setHsTicketUrl] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
+  const deletingIdsRef = useRef<Set<string>>(new Set())
+
+  const addDeleting = (id: string) => {
+    deletingIdsRef.current.add(id)
+    setDeletingIds(new Set(deletingIdsRef.current))
+  }
+
+  const removeDeleting = (id: string) => {
+    deletingIdsRef.current.delete(id)
+    setDeletingIds(new Set(deletingIdsRef.current))
+  }
 
   const hsTicketValid = hsTicketUrl.startsWith('https://app.hubspot.com/')
+
   async function fetchJobs() {
     try {
       const res = await fetch('/api/enrich/jobs', {
@@ -65,6 +77,10 @@ export default function DashboardPage() {
     let timeoutId: NodeJS.Timeout
 
     const poll = async () => {
+      if (deletingIdsRef.current.size > 0) {
+        if (isMounted) timeoutId = setTimeout(poll, 3000)
+        return
+      }
       await fetchJobs()
       if (isMounted) {
         timeoutId = setTimeout(poll, 3000)
@@ -79,17 +95,34 @@ export default function DashboardPage() {
     }
   }, [])
 
-  async function handleDelete(jobId: string) {
-    if (!window.confirm('Delete this job and all its rows?')) return
+  const handleDelete = async (jobId: string) => {
+    const confirmed = window.confirm(
+      'Delete this job and all its rows? This cannot be undone.'
+    )
+    if (!confirmed) return
+
+    addDeleting(jobId)
+
     try {
-      const res = await fetch(`/api/enrich/jobs/${jobId}`, { method: 'DELETE' })
-      const json = await res.json()
-      if (!res.ok) { setDeleteError(json.error ?? 'Delete failed'); return }
-      setJobs((prev) => prev.filter((j) => j.id !== jobId))
-      setDeleteError(null)
-      await fetchJobs()
-    } catch {
-      setDeleteError('Network error — could not delete job')
+      const res = await fetch(`/api/enrich/jobs/${jobId}`, {
+        method: 'DELETE',
+        cache: 'no-store',
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.error || 'Delete failed. Please try again.')
+        removeDeleting(jobId)
+        return
+      }
+
+      setJobs(prev => prev.filter(j => j.id !== jobId))
+      removeDeleting(jobId)
+
+    } catch (e) {
+      console.error('Delete error:', e)
+      alert('Delete failed. Please try again.')
+      removeDeleting(jobId)
     }
   }
 
@@ -187,10 +220,6 @@ export default function DashboardPage() {
         )}
       </form>
 
-      {deleteError && (
-        <p className="mb-4 text-sm text-red-600">{deleteError}</p>
-      )}
-
       {jobs.length === 0 ? (
         <p className="text-sm text-gray-500">No jobs yet. Upload a CSV file above to get started.</p>
       ) : (
@@ -231,9 +260,10 @@ export default function DashboardPage() {
                     </a>
                     <button
                       onClick={() => handleDelete(job.id)}
-                      className="text-red-500 hover:underline text-sm"
+                      disabled={deletingIds.has(job.id)}
+                      className="text-red-500 hover:underline text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Delete
+                      {deletingIds.has(job.id) ? 'Deleting...' : 'Delete'}
                     </button>
                   </td>
                 </tr>

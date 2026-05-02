@@ -13,23 +13,32 @@ export async function DELETE(
   }
   const jobId = parsed.data
 
-  const { error: rowsError } = await supabaseAdmin
-    .from('enrich_rows')
-    .delete()
-    .eq('job_id', jobId)
+  try {
+    const { error: rowsError } = await supabaseAdmin
+      .from('enrich_rows')
+      .delete()
+      .eq('job_id', jobId)
 
-  if (rowsError) {
-    return Response.json({ error: rowsError.message }, { status: 500 })
+    if (rowsError) {
+      console.error('Delete rows error:', rowsError.message)
+      return Response.json({ error: rowsError.message }, { status: 500 })
+    }
+
+    const { error: jobError } = await supabaseAdmin
+      .from('enrich_jobs')
+      .delete()
+      .eq('id', jobId)
+
+    if (jobError) {
+      console.error('Delete job error:', jobError.message)
+      return Response.json({ error: jobError.message }, { status: 500 })
+    }
+
+    return Response.json({ data: { deleted: true } }, {
+      headers: { 'Cache-Control': 'no-store' },
+    })
+  } catch (e) {
+    console.error('Delete handler error:', e)
+    return Response.json({ error: 'Unexpected error during delete' }, { status: 500 })
   }
-
-  const { error: jobError } = await supabaseAdmin
-    .from('enrich_jobs')
-    .delete()
-    .eq('id', jobId)
-
-  if (jobError) {
-    return Response.json({ error: jobError.message }, { status: 500 })
-  }
-
-  return Response.json({ success: true })
 }
