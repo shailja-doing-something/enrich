@@ -59,12 +59,17 @@ export default function DashboardPage() {
 
   const hsTicketValid = hsTicketUrl.startsWith('https://app.hubspot.com/')
 
-  async function fetchJobs() {
+  const fetchJobs = async () => {
     try {
-      const res = await fetch('/api/enrich/jobs', {
+      const res = await fetch(`/api/enrich/jobs?t=${Date.now()}`, {
+        method: 'GET',
         cache: 'no-store',
-        headers: { 'Cache-Control': 'no-cache' },
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+        },
       })
+      if (!res.ok) return
       const json = await res.json()
       const jobs = json.data ?? json ?? []
       setJobs((jobs as EnrichJob[]).filter((j) => j.status !== 'failed'))
