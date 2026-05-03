@@ -135,10 +135,12 @@ function MappingState({
   job,
   jobId,
   setJob,
+  setConfirmedLocally,
 }: {
   job: JobWithHeaders
   jobId: string
   setJob: (fn: (prev: JobWithHeaders | null) => JobWithHeaders | null) => void
+  setConfirmedLocally: (v: boolean) => void
 }) {
   const router = useRouter()
   const [mapping, setMapping] = useState<ColumnMapping | null>(() => job.column_mapping ?? null)
@@ -215,7 +217,8 @@ function MappingState({
         return
       }
 
-      // CALL 1 succeeded — update local state immediately so UI transitions now
+      // CALL 1 succeeded — lock out STATE B permanently for this session
+      setConfirmedLocally(true)
       setJob(prev => prev ? { ...prev, status: 'generating', mapping_confirmed: true } : prev)
 
       // CALL 2: execute — truly fire-and-forget, client does not wait
@@ -309,7 +312,7 @@ function MappingState({
         disabled={confirming}
         className="rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {confirming ? 'Confirming…' : 'Confirm and generate sheets'}
+        {confirming ? 'Confirming…' : 'Confirm and generate sheet'}
       </button>
     </div>
   )
@@ -658,6 +661,7 @@ export default function JobDetailPage() {
   const [job, setJob] = useState<JobWithHeaders | null>(null)
   const [rows, setRows] = useState<EnrichRow[]>([])
   const [notFound, setNotFound] = useState(false)
+  const [confirmedLocally, setConfirmedLocally] = useState(false)
 
   useEffect(() => {
     if (!jobId) return
@@ -711,40 +715,41 @@ export default function JobDetailPage() {
     )
   }
 
-  if (!job) {
-    return (
-      <main className="max-w-5xl mx-auto px-4 py-10">
+  return (
+    <main className="max-w-5xl mx-auto px-4 py-10">
+      <a href="/" className="text-sm text-gray-500 hover:text-gray-700 mb-6 block">← Back to dashboard</a>
+
+      {!job && (
         <div className="flex items-center justify-center min-h-64">
           <Spinner />
         </div>
-      </main>
-    )
-  }
+      )}
 
-  function renderContent(j: JobWithHeaders) {
-    if (j.status === 'failed') {
-      return (
+      {job && job.status === 'failed' && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4">
           <h2 className="font-semibold text-red-800 mb-1">Job Failed</h2>
-          <p className="text-sm text-red-700 mb-3">{j.error_log ?? 'An unknown error occurred.'}</p>
+          <p className="text-sm text-red-700 mb-3">{job.error_log ?? 'An unknown error occurred.'}</p>
           <a href="/" className="inline-block rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
             Start over
           </a>
         </div>
-      )
-    }
-    if (j.status === 'complete') return <CompleteState job={j} rows={rows} />
-    if (RUNNING_STATUSES.includes(j.status)) return <PipelineRunningState job={j} />
-    if (j.status === 'ready') return <ReadyState job={j} jobId={jobId} rows={rows} setJob={setJob} />
-    if (j.status === 'generating') return <ProcessingState status={j.status} />
-    if (j.status === 'awaiting_confirmation') return <MappingState job={j} jobId={jobId} setJob={setJob} />
-    return <ProcessingState status={j.status} />
-  }
+      )}
 
-  return (
-    <main className="max-w-5xl mx-auto px-4 py-10">
-      <a href="/" className="text-sm text-gray-500 hover:text-gray-700 mb-6 block">← Back to dashboard</a>
-      {job && renderContent(job)}
+      {job && job.status === 'complete' && <CompleteState job={job} rows={rows} />}
+
+      {job && RUNNING_STATUSES.includes(job.status) && <PipelineRunningState job={job} />}
+
+      {job && job.status === 'ready' && <ReadyState job={job} jobId={jobId} rows={rows} setJob={setJob} />}
+
+      {job && job.status === 'generating' && <ProcessingState status={job.status} />}
+
+      {job && job.status === 'awaiting_confirmation' && !job.mapping_confirmed && !confirmedLocally && (
+        <MappingState job={job} jobId={jobId} setJob={setJob} setConfirmedLocally={setConfirmedLocally} />
+      )}
+
+      {job && ['pending', 'parsing', 'mapping'].includes(job.status) && (
+        <ProcessingState status={job.status} />
+      )}
     </main>
   )
 }
