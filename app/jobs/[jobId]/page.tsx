@@ -17,7 +17,9 @@ export default function JobPage() {
   const [allRows, setAllRows] = useState<EnrichRow[]>([])
   const [showAllRows, setShowAllRows] = useState(false)
   const [localMapping, setLocalMapping] = useState<ColumnMapping | null>(null)
+  const [networkError, setNetworkError] = useState(false)
   const localMappingRef = useRef<ColumnMapping | null>(null)
+  const failureCountRef = useRef(0)
   const mountedRef = useRef(true)
 
   // Initialize localMapping once when job column_mapping first arrives
@@ -42,6 +44,8 @@ export default function JobPage() {
         }
         const data = await res.json()
         if (mountedRef.current) {
+          failureCountRef.current = 0
+          if (networkError) setNetworkError(false)
           setJob(data)
           if (!localMappingRef.current && data.column_mapping) {
             localMappingRef.current = data.column_mapping
@@ -52,7 +56,11 @@ export default function JobPage() {
           }
         }
       } catch {
-        if (mountedRef.current) timeoutId = setTimeout(poll, 3000)
+        failureCountRef.current += 1
+        if (failureCountRef.current >= 5) {
+          if (mountedRef.current) setNetworkError(true)
+        }
+        if (mountedRef.current) timeoutId = setTimeout(poll, 5000)
       }
     }
 
@@ -62,7 +70,7 @@ export default function JobPage() {
       mountedRef.current = false
       clearTimeout(timeoutId)
     }
-  }, [jobId])
+  }, [jobId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch rows when job reaches ready or complete
   useEffect(() => {
@@ -164,7 +172,23 @@ export default function JobPage() {
     return (
       <div style={{ padding: '2rem' }}>
         <a href="/">← Back to dashboard</a>
-        <div style={{ marginTop: '4rem', textAlign: 'center' }}>Loading...</div>
+        {networkError ? (
+          <div style={{ marginTop: '4rem', textAlign: 'center' }}>
+            <p style={{ color: 'red' }}>
+              Cannot reach the server. Please check your internet connection and refresh the page.
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              style={{ marginTop: '1rem', padding: '0.5rem 1rem' }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <div style={{ marginTop: '4rem', textAlign: 'center' }}>
+            <p>Loading job data...</p>
+          </div>
+        )}
       </div>
     )
   }
