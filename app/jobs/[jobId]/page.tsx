@@ -17,6 +17,7 @@ export default function JobPage() {
   const [allRows, setAllRows] = useState<EnrichRow[]>([])
   const [showAllRows, setShowAllRows] = useState(false)
   const [localMapping, setLocalMapping] = useState<ColumnMapping | null>(null)
+  const localMappingRef = useRef<ColumnMapping | null>(null)
   const mountedRef = useRef(true)
 
   // Initialize localMapping once when job column_mapping first arrives
@@ -42,6 +43,10 @@ export default function JobPage() {
         const data = await res.json()
         if (mountedRef.current) {
           setJob(data)
+          if (!localMappingRef.current && data.column_mapping) {
+            localMappingRef.current = data.column_mapping
+            setLocalMapping(data.column_mapping)
+          }
           if (!TERMINAL.includes(data.status)) {
             timeoutId = setTimeout(poll, 2000)
           }
@@ -310,7 +315,7 @@ export default function JobPage() {
   }
 
   // AWAITING CONFIRMATION — STATE B
-  if (status === 'awaiting_confirmation' && !job.mapping_confirmed && !confirmedLocally) {
+  if (status === 'awaiting_confirmation' && !confirmedLocally) {
     const mapping = localMapping ?? job.column_mapping
 
     if (!mapping) {
@@ -437,7 +442,7 @@ export default function JobPage() {
     <div style={{ padding: '2rem' }}>
       <a href="/">← Back to dashboard</a>
       <div style={{ marginTop: '4rem', textAlign: 'center' }}>
-        <p>{statusMessages[status] ?? `Processing… (${status})`}</p>
+        <p>{statusMessages[status] ?? 'Loading job data...'}</p>
       </div>
     </div>
   )
