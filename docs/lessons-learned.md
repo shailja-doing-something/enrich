@@ -43,3 +43,18 @@ Each stage file exports a `runStageN` controller that calls the mock. Swapping t
 
 ### Polling continues through complete state
 The job detail page polls every 2s even after `status === 'complete'`, re-fetching rows every 3 polls (~6s). This catches any late DB writes without requiring a manual refresh. Stop condition is `failed` only.
+
+### React state is stale inside polling closures — use refs
+`useEffect` captures state values at the time the effect runs. A polling `setInterval` closure will always see the initial value of any `useState` variable. Fix: maintain a parallel `useRef` that is updated alongside every `setState` call; read the ref (not the state) inside the closure. This pattern was needed for `confirmedLocally`, `localMapping`, and `autoRunFired` in the job detail page.
+
+### `mapping_confirmed` in DB is not a reliable UI gate
+After the user confirms a mapping, the DB is updated with `mapping_confirmed: true`. On the next poll the client receives this flag, which caused STATE B (mapping review) to be skipped. The fix is to track confirmation purely client-side with `confirmedLocally` state — never re-derive STATE B from `job.mapping_confirmed`.
+
+### Auto-waterfall requires `APP_URL` set in Edge Function secrets
+The `generate-enrich-rows` Edge Function fires a callback to `APP_URL/api/enrich/auto-run` after writing rows. This env var must be set in Supabase dashboard → Edge Functions → Secrets (not just Railway). Without it the pipeline never starts and the job sits at `ready` forever.
+
+### Zillow ZIP API: email lookup must use `exact=true`
+Without `exact=true`, fuzzy matching returns unrelated agents. Pass `exact=true&limit=1` for email lookups. Phone lookups don't need it — the normalized 10-digit string is already exact enough.
+
+### Railway CDN caches GET responses aggressively
+`Cache-Control` on the response alone isn't enough — Railway's CDN ignores it. Fix requires: `export const revalidate = 0` + `export const fetchCache = 'force-no-store'` on the route module, full cache headers on the response, AND a `?t=${Date.now()}` cache-buster on every client fetch.

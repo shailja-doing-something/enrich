@@ -1,5 +1,29 @@
 # Release Notes
 
+## [0.3.0] — 2026-05-04 — Stage 1 real Zillow ZIP API + auto-waterfall pipeline
+
+### Added
+- `app/api/enrich/preview/route.ts` — POST: returns first 10 formatted rows from a mapping without writing to DB; powers the live preview table in STATE B
+- `app/api/enrich/save-and-run/route.ts` — POST: saves confirmed mapping, fires `generate-enrich-rows` Edge Function fire-and-forget; replaces the old confirm/prepare + confirm/execute split
+- `app/api/enrich/auto-run/route.ts` — POST: called by Edge Function after rows are written; sets `stage1_running` and fires `run-enrichment-pipeline`; idempotent if already running
+- `supabase/functions/generate-enrich-rows/index.ts` — now calls back to `APP_URL/api/enrich/auto-run` after setting status `ready`, completing the auto-waterfall
+
+### Changed
+- `lib/enrichment/stage1.ts` — replaced mock with real Zillow ZIP API: email-first lookup (`/api/agents/by-email?exact=true`), phone fallback (`/api/agents/by-phone`), batched 5 at a time with 500ms delay between batches, 15s per-request timeout via `AbortSignal.timeout`
+- `supabase/functions/run-enrichment-pipeline/index.ts` — Stage 1 now uses inline `runStage1Real` (same logic as `lib/enrichment/stage1.ts`, duplicated for Deno isolation); reads `ZILLOW_ZIP_API_KEY` from Edge Function secrets
+- `lib/env.ts` — `ZILLOW_ZIP_API_KEY` promoted from `optional` to `required`
+- `app/jobs/[jobId]/page.tsx` — complete rewrite: flat component with all state at top level, live mapping preview before DB write, single "Save and run enrichment" button, network error state after 5 consecutive poll failures
+
+### Removed
+- `app/api/enrich/confirm/prepare/route.ts` — replaced by `save-and-run`
+- `app/api/enrich/confirm/execute/route.ts` — replaced by `save-and-run`
+
+### Env vars
+- `ZILLOW_ZIP_API_KEY` — now required; must be set in Railway and in Supabase Edge Function secrets
+- `APP_URL` — must be set in Supabase Edge Function secrets (the Railway app URL) for auto-waterfall to work
+
+---
+
 ## [0.2.2] — 2026-05-03 — Delete race condition fix
 
 ### Fixed
