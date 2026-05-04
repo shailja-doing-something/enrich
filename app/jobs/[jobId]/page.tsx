@@ -2,32 +2,28 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
-import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField } from '@/lib/supabase/types'
+import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField, GenericFormattedRow } from '@/lib/supabase/types'
 
 export default function JobPage() {
   const params = useParams()
   const jobId = params?.jobId as string
 
   const [job, setJob] = useState<EnrichJob | null>(null)
-  const [confirmedLocally, setConfirmedLocally] = useState(false)
-  const [confirming, setConfirming] = useState(false)
-  const [confirmError, setConfirmError] = useState<string | null>(null)
-  const [runningLocally, setRunningLocally] = useState(false)
-  const [runError, setRunError] = useState<string | null>(null)
   const [allRows, setAllRows] = useState<EnrichRow[]>([])
-  const [showAllRows, setShowAllRows] = useState(false)
-  const [localMapping, setLocalMapping] = useState<ColumnMapping | null>(null)
+  const [confirmedLocally, setConfirmedLocally] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [preview, setPreview] = useState<GenericFormattedRow[] | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [networkError, setNetworkError] = useState(false)
-  const localMappingRef = useRef<ColumnMapping | null>(null)
-  const failureCountRef = useRef(0)
-  const mountedRef = useRef(true)
+  const [localMapping, setLocalMapping] = useState<ColumnMapping | null>(null)
+  const [showAllRows, setShowAllRows] = useState(false)
 
-  // Initialize localMapping once when job column_mapping first arrives
-  useEffect(() => {
-    if (job?.column_mapping && !localMapping) {
-      setLocalMapping(job.column_mapping)
-    }
-  }, [job?.column_mapping]) // eslint-disable-line react-hooks/exhaustive-deps
+  const mountedRef = useRef(true)
+  const failureCountRef = useRef(0)
+  const autoRunFiredRef = useRef(false)
+  const confirmedLocallyRef = useRef(false)
+  const localMappingInitRef = useRef(false)
 
   // Polling — stops only on terminal status
   useEffect(() => {
@@ -45,12 +41,25 @@ export default function JobPage() {
         const data = await res.json()
         if (mountedRef.current) {
           failureCountRef.current = 0
-          if (networkError) setNetworkError(false)
+          setNetworkError(false)
           setJob(data)
-          if (!localMappingRef.current && data.column_mapping) {
-            localMappingRef.current = data.column_mapping
+
+          // Initialize localMapping once
+          if (!localMappingInitRef.current && data.column_mapping) {
+            localMappingInitRef.current = true
             setLocalMapping(data.column_mapping)
           }
+
+          // Auto-run when rows are ready after user confirmed
+          if (data.status === 'ready' && confirmedLocallyRef.current && !autoRunFiredRef.current) {
+            autoRunFiredRef.current = true
+            fetch('/api/enrich/auto-run', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jobId }),
+            }).catch(console.error)
+          }
+
           if (!TERMINAL.includes(data.status)) {
             timeoutId = setTimeout(poll, 2000)
           }
@@ -84,64 +93,52 @@ export default function JobPage() {
       .catch(() => {})
   }, [job?.status, jobId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleConfirm = async () => {
-    if (confirming) return
-    setConfirming(true)
-    setConfirmError(null)
+  // Fetch preview whenever localMapping changes (STATE B only)
+  useEffect(() => {
+    if (!localMapping || !job?.id) return
+    if (job.status !== 'awaiting_confirmation') return
+
+    setPreviewLoading(true)
+    fetch('/api/enrich/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: job.id, columnMapping: localMapping }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (mountedRef.current) {
+          setPreview(data.preview ?? [])
+          setPreviewLoading(false)
+        }
+      })
+      .catch(() => {
+        if (mountedRef.current) setPreviewLoading(false)
+      })
+  }, [localMapping, job?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSaveAndRun = async () => {
+    if (saving) return
+    setSaving(true)
+    setSaveError(null)
     try {
-      const columnMapping = localMapping ?? job?.column_mapping
-      if (!columnMapping) {
-        setConfirmError('Column mapping missing. Please go back and try again.')
-        setConfirming(false)
-        return
-      }
-      const res = await fetch('/api/enrich/confirm/prepare', {
+      const res = await fetch('/api/enrich/save-and-run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId, columnMapping }),
+        body: JSON.stringify({ jobId, columnMapping: localMapping }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        setConfirmError((err as { error?: string }).error || 'Confirmation failed')
-        setConfirming(false)
+        setSaveError((err as { error?: string }).error || 'Save failed')
+        setSaving(false)
         return
       }
+      confirmedLocallyRef.current = true
       setConfirmedLocally(true)
       setJob(prev => prev ? { ...prev, status: 'generating', mapping_confirmed: true } : prev)
-      const body = JSON.stringify({ jobId })
-      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
-        navigator.sendBeacon('/api/enrich/confirm/execute', new Blob([body], { type: 'application/json' }))
-      } else {
-        fetch('/api/enrich/confirm/execute', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body,
-          keepalive: true,
-        }).catch(() => {})
-      }
+      // do NOT setSaving(false) — polling handles the transition
     } catch {
-      setConfirmError('Network error. Please try again.')
-      setConfirming(false)
-    }
-  }
-
-  const handleRun = async () => {
-    if (runningLocally) return
-    setRunningLocally(true)
-    setRunError(null)
-    try {
-      const res = await fetch(`/api/enrich/run/${jobId}/trigger`, { method: 'POST' })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        setRunError((err as { error?: string }).error || 'Failed to start enrichment')
-        setRunningLocally(false)
-        return
-      }
-      setJob(prev => prev ? { ...prev, status: 'stage1_running' } : prev)
-      fetch(`/api/enrich/run/${jobId}/fire`, { method: 'POST', keepalive: true }).catch(() => {})
-    } catch {
-      setRunError('Network error. Please try again.')
-      setRunningLocally(false)
+      setSaveError('Network error. Please try again.')
+      setSaving(false)
     }
   }
 
@@ -174,15 +171,8 @@ export default function JobPage() {
         <a href="/">← Back to dashboard</a>
         {networkError ? (
           <div style={{ marginTop: '4rem', textAlign: 'center' }}>
-            <p style={{ color: 'red' }}>
-              Cannot reach the server. Please check your internet connection and refresh the page.
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              style={{ marginTop: '1rem', padding: '0.5rem 1rem' }}
-            >
-              Retry
-            </button>
+            <p style={{ color: 'red' }}>Cannot reach the server. Please check your internet connection and refresh the page.</p>
+            <button onClick={() => window.location.reload()} style={{ marginTop: '1rem', padding: '0.5rem 1rem' }}>Retry</button>
           </div>
         ) : (
           <div style={{ marginTop: '4rem', textAlign: 'center' }}>
@@ -215,23 +205,67 @@ export default function JobPage() {
   if (status === 'complete') {
     const foundRows = allRows.filter(r => r.enrichment_status === 'found')
     const notFoundRows = allRows.filter(r => r.enrichment_status === 'not_found')
+    const displayRows = showAllRows ? allRows : allRows.slice(0, 10)
     return (
       <div style={{ padding: '2rem' }}>
         <a href="/">← Back to dashboard</a>
-        <h2 style={{ color: 'green', marginTop: '1rem' }}>Enrichment complete</h2>
-        <p style={{ marginTop: '0.5rem' }}>Total: {allRows.length} rows</p>
-        <p>Found: {job.stage1_found_count ?? 0} (Stage 1) + {job.stage2_found_count ?? 0} (Stage 2) + {job.stage3_found_count ?? 0} (Stage 3)</p>
-        <p>Not found: {notFoundRows.length}</p>
+        <h2 style={{ marginTop: '1rem' }}>Enrichment complete</h2>
+        <div style={{ display: 'flex', gap: '2rem', marginTop: '1rem', flexWrap: 'wrap', fontSize: '14px' }}>
+          <p>Stage 1: <strong>{job.stage1_found_count ?? 0}</strong> found</p>
+          <p>Stage 2: <strong>{job.stage2_found_count ?? 0}</strong> found</p>
+          <p>Stage 3: <strong>{job.stage3_found_count ?? 0}</strong> found</p>
+          <p>Not found: <strong>{notFoundRows.length}</strong></p>
+        </div>
         <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem' }}>
           <button onClick={() => downloadCSV(
             foundRows.map(r => r.enriched_data ?? {}),
             `enriched-found-${jobId}.csv`
-          )}>Download enriched rows</button>
+          )}>Download enriched ({foundRows.length} rows)</button>
           <button onClick={() => downloadCSV(
             notFoundRows.map(r => (r.formatted_input ?? {}) as Record<string, unknown>),
-            `enriched-notfound-${jobId}.csv`
-          )}>Download not found rows</button>
+            `not-found-${jobId}.csv`
+          )}>Download not found ({notFoundRows.length} rows)</button>
         </div>
+        <div style={{ overflowX: 'auto', marginTop: '1.5rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Name</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Email</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Status</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Stage</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayRows.map((row, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #f5f5f5' }}>
+                  <td style={{ padding: '0.5rem 0.75rem' }}>{row.formatted_input?.name || '—'}</td>
+                  <td style={{ padding: '0.5rem 0.75rem' }}>{row.formatted_input?.email || '—'}</td>
+                  <td style={{ padding: '0.5rem 0.75rem' }}>
+                    <span style={{
+                      padding: '2px 8px', borderRadius: '4px', fontSize: '12px',
+                      background: row.enrichment_status === 'found' ? '#dcfce7' : row.enrichment_status === 'not_found' ? '#fee2e2' : '#f3f4f6',
+                      color: row.enrichment_status === 'found' ? '#166534' : row.enrichment_status === 'not_found' ? '#991b1b' : '#6b7280',
+                    }}>
+                      {row.enrichment_status.replace('_', ' ')}
+                    </span>
+                  </td>
+                  <td style={{ padding: '0.5rem 0.75rem' }}>{row.stage_reached ?? '—'}</td>
+                  <td style={{ padding: '0.5rem 0.75rem' }}>{(row.enriched_data?.source as string | undefined) ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {allRows.length > 10 && (
+          <button
+            onClick={() => setShowAllRows(!showAllRows)}
+            style={{ marginTop: '0.5rem', background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '13px' }}
+          >
+            {showAllRows ? 'Show fewer rows' : `View all ${allRows.length} rows`}
+          </button>
+        )}
       </div>
     )
   }
@@ -243,18 +277,32 @@ export default function JobPage() {
     return (
       <div style={{ padding: '2rem' }}>
         <a href="/">← Back to dashboard</a>
-        <h2 style={{ marginTop: '1rem' }}>Running enrichment...</h2>
-        <div style={{ marginTop: '1rem', lineHeight: '2' }}>
-          <p>{s1Done ? '✓' : '⟳'} Stage 1 — Platform search{job.stage1_found_count != null ? ` (${job.stage1_found_count} found)` : ''}</p>
-          <p>{s2Done ? '✓' : status === 'stage2_running' ? '⟳' : '○'} Stage 2 — Database lookup{job.stage2_found_count != null ? ` (${job.stage2_found_count} found)` : ''}</p>
-          <p>{status === 'stage3_running' ? '⟳' : '○'} Stage 3 — Scrape enrichment{job.stage3_found_count != null ? ` (${job.stage3_found_count} found)` : ''}</p>
+        <h2 style={{ marginTop: '1rem' }}>Enrichment running</h2>
+        <p style={{ color: '#6b7280', marginTop: '0.25rem', fontSize: '13px' }}>{job.raw_row_count ?? 0} rows being processed</p>
+        <div style={{ marginTop: '1.5rem', lineHeight: '2.5', fontSize: '14px' }}>
+          <p>{s1Done ? '✓' : '⟳'} Stage 1 — Platform search{s1Done && job.stage1_found_count != null ? ` — ${job.stage1_found_count} found` : ''}</p>
+          <p>{s2Done ? '✓' : status === 'stage2_running' ? '⟳' : '○'} Stage 2 — Database lookup{s2Done && job.stage2_found_count != null ? ` — ${job.stage2_found_count} found` : ''}</p>
+          <p>{status === 'stage3_running' ? '⟳' : '○'} Stage 3 — Scrape enrichment</p>
         </div>
       </div>
     )
   }
 
-  // READY — STATE C
+  // READY — STATE C (transitional)
   if (status === 'ready') {
+    // If user just confirmed: show spinner while auto-run fires
+    if (confirmedLocally) {
+      return (
+        <div style={{ padding: '2rem' }}>
+          <a href="/">← Back to dashboard</a>
+          <div style={{ marginTop: '4rem', textAlign: 'center' }}>
+            <p>Preparing enrichment...</p>
+            <p style={{ fontSize: '13px', color: '#888', marginTop: '0.5rem' }}>Starting the pipeline...</p>
+          </div>
+        </div>
+      )
+    }
+    // User navigated directly to a ready job — show preview and Run button
     const displayRows = showAllRows ? allRows : allRows.slice(0, 5)
     const sampleRow = allRows[0]?.formatted_input
     return (
@@ -269,18 +317,20 @@ export default function JobPage() {
             `formatted-input-${jobId}.csv`
           )}>Download formatted CSV</button>
           <button
-            onClick={handleRun}
-            disabled={runningLocally}
-            style={{
-              background: runningLocally ? '#93c5fd' : '#2563eb', color: 'white',
-              padding: '0.5rem 1rem', border: 'none', borderRadius: '6px',
-              cursor: runningLocally ? 'not-allowed' : 'pointer',
+            onClick={async () => {
+              autoRunFiredRef.current = true
+              setJob(prev => prev ? { ...prev, status: 'stage1_running' } : prev)
+              fetch('/api/enrich/auto-run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jobId }),
+              }).catch(console.error)
             }}
+            style={{ background: '#2563eb', color: 'white', padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
           >
-            {runningLocally ? 'Starting...' : 'Run Enrichment'}
+            Run Enrichment
           </button>
         </div>
-        {runError && <p style={{ color: 'red', marginTop: '0.5rem' }}>{runError}</p>}
         <div style={{ marginTop: '1.5rem' }}>
           <h3>Formatted Input ({job.raw_row_count ?? allRows.length} rows)</h3>
           {sampleRow && (
@@ -316,11 +366,6 @@ export default function JobPage() {
             </button>
           )}
         </div>
-        <div style={{ marginTop: '1.5rem', fontSize: '13px', color: '#888' }}>
-          <p>Created: {new Date(job.created_at).toLocaleString()}</p>
-          <p>File: {job.sheet_url}</p>
-          {job.parsed_at && <p>Confirmed at: {new Date(job.parsed_at).toLocaleString()}</p>}
-        </div>
       </div>
     )
   }
@@ -331,7 +376,7 @@ export default function JobPage() {
       <div style={{ padding: '2rem' }}>
         <a href="/">← Back to dashboard</a>
         <div style={{ marginTop: '4rem', textAlign: 'center' }}>
-          <p>Generating input sheet...</p>
+          <p>Generating formatted sheet...</p>
           <p style={{ fontSize: '13px', color: '#888', marginTop: '0.5rem' }}>This usually takes 10–30 seconds</p>
         </div>
       </div>
@@ -371,16 +416,18 @@ export default function JobPage() {
       })
     }
 
+    const PREVIEW_COLS: (keyof GenericFormattedRow)[] = ['name', 'email', 'phone', 'team_name', 'brokerage', 'website', 'location']
+
     return (
       <div style={{ padding: '2rem' }}>
         <a href="/">← Back to dashboard</a>
         <h2 style={{ marginTop: '1rem' }}>Review Column Mapping</h2>
-        <p style={{ color: '#666', marginTop: '0.5rem' }}>
+        <p style={{ color: '#6b7280', marginTop: '0.5rem' }}>
           Gemini detected the following mapping. You can adjust any field using the dropdown.
         </p>
 
         <div style={{ overflowX: 'auto', marginTop: '1.5rem' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #e5e7eb' }}>
             <thead>
               <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                 <th style={{ textAlign: 'left', padding: '0.75rem 1rem', fontWeight: 500 }}>Target Field</th>
@@ -437,19 +484,51 @@ export default function JobPage() {
           </div>
         )}
 
-        {confirmError && <p style={{ color: 'red', marginTop: '1rem' }}>{confirmError}</p>}
+        <div style={{ marginTop: '1.5rem' }}>
+          <h3 style={{ marginBottom: '0.75rem', fontSize: '15px' }}>Preview formatted data</h3>
+          {previewLoading && <p style={{ color: '#9ca3af', fontSize: '13px' }}>Loading preview...</p>}
+          {!previewLoading && preview && preview.length > 0 && (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', border: '1px solid #e5e7eb' }}>
+                <thead>
+                  <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                    {PREVIEW_COLS.map(k => (
+                      <th key={k} style={{ textAlign: 'left', padding: '0.5rem 0.75rem', fontWeight: 500, whiteSpace: 'nowrap' }}>{k}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.map((row, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      {PREVIEW_COLS.map(k => (
+                        <td key={k} style={{ padding: '0.5rem 0.75rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {row[k] || <span style={{ color: '#d1d5db' }}>—</span>}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!previewLoading && (!preview || preview.length === 0) && localMapping && (
+            <p style={{ color: '#9ca3af', fontSize: '13px' }}>No preview available</p>
+          )}
+        </div>
+
+        {saveError && <p style={{ color: 'red', marginTop: '1rem' }}>{saveError}</p>}
 
         <button
-          onClick={handleConfirm}
-          disabled={confirming}
+          onClick={handleSaveAndRun}
+          disabled={saving}
           style={{
             marginTop: '1.5rem', padding: '0.75rem 1.5rem',
-            background: confirming ? '#93c5fd' : '#2563eb', color: 'white',
+            background: saving ? '#93c5fd' : '#2563eb', color: 'white',
             border: 'none', borderRadius: '8px', fontSize: '15px',
-            cursor: confirming ? 'not-allowed' : 'pointer',
+            cursor: saving ? 'not-allowed' : 'pointer',
           }}
         >
-          {confirming ? 'Confirming...' : 'Confirm and generate sheet'}
+          {saving ? 'Saving...' : 'Save and run enrichment'}
         </button>
       </div>
     )

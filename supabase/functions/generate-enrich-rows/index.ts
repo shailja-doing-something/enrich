@@ -130,6 +130,16 @@ serve(async (req) => {
       })
       .eq('id', jobId)
 
+    // Auto-trigger the enrichment pipeline
+    const appUrl = Deno.env.get('APP_URL') ?? ''
+    if (appUrl) {
+      fetch(`${appUrl}/api/enrich/auto-run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId }),
+      }).catch(err => console.error('Auto-run trigger failed:', err))
+    }
+
     return new Response(
       JSON.stringify({ success: true, rowCount: insertRows.length }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }

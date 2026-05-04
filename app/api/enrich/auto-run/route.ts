@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import { getJob } from '@/lib/supabase/jobs'
+import { getJob, updateJob } from '@/lib/supabase/jobs'
 import { env } from '@/lib/env'
 
 const bodySchema = z.object({
@@ -20,28 +20,22 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Job not found' }, { status: 404 })
   }
 
-  if (job.status !== 'generating') {
-    return Response.json(
-      { error: `Job is not in generating state (current status: ${job.status})` },
-      { status: 400 }
-    )
+  if (job.status !== 'ready') {
+    return Response.json({ ok: true }) // already running or done — silently ignore
   }
 
-  const edgeUrl = `${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-enrich-rows`
+  await updateJob(jobId, { status: 'stage1_running' })
 
+  // Fire run-enrichment-pipeline Edge Function fire-and-forget
+  const edgeUrl = `${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/run-enrichment-pipeline`
   fetch(edgeUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
     },
-    body: JSON.stringify({
-      jobId: job.id,
-      columnMapping: job.column_mapping,
-      hsTicketUrl: job.hs_ticket_url,
-      rawCsv: job.raw_csv,
-    }),
-  }).catch(err => console.error('Edge fn error:', err))
+    body: JSON.stringify({ jobId }),
+  }).catch(err => console.error('run-enrichment-pipeline trigger failed:', err))
 
-  return Response.json({ jobId, status: 'generating' })
+  return Response.json({ ok: true })
 }

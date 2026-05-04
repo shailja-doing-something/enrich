@@ -1,6 +1,10 @@
+export const dynamic = 'force-dynamic'
+
 import { NextRequest } from 'next/server'
+import Papa from 'papaparse'
 import { z } from 'zod'
-import { getJob, updateJob } from '@/lib/supabase/jobs'
+import { getJob } from '@/lib/supabase/jobs'
+import { mapRowToGeneric } from '@/lib/enrichment/columnMapper'
 import type { ColumnMapping } from '@/lib/supabase/types'
 
 const columnMappingFieldSchema = z.object({
@@ -23,6 +27,8 @@ const bodySchema = z.object({
   columnMapping: columnMappingSchema,
 })
 
+const COLUMNS = ['name', 'email', 'phone', 'team_name', 'brokerage', 'website', 'location', 'hs_ticket_url']
+
 export async function POST(request: NextRequest) {
   const parsed = bodySchema.safeParse(await request.json())
   if (!parsed.success) {
@@ -36,30 +42,19 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Job not found' }, { status: 404 })
   }
 
-  if (job.status !== 'awaiting_confirmation') {
-    return Response.json(
-      { error: `Job is not awaiting confirmation (current status: ${job.status})` },
-      { status: 400 }
-    )
-  }
-
   if (!job.raw_csv) {
-    return Response.json({ error: 'Raw CSV missing from job. Please start over.' }, { status: 400 })
+    return Response.json({ error: 'No CSV data found' }, { status: 400 })
   }
 
-  if (!job.hs_ticket_url) {
-    return Response.json({ error: 'HubSpot ticket URL missing from job. Please start over.' }, { status: 400 })
-  }
-
-  await updateJob(jobId, {
-    column_mapping: columnMapping as ColumnMapping,
-    mapping_confirmed: true,
-    status: 'generating',
+  const result = Papa.parse<Record<string, string>>(job.raw_csv, {
+    header: true,
+    skipEmptyLines: true,
   })
 
-  return Response.json({
-    jobId,
-    status: 'generating',
-    executeUrl: '/api/enrich/confirm/execute',
-  })
+  const rows = result.data
+  const preview = rows.slice(0, 10).map(row =>
+    mapRowToGeneric(row, columnMapping as ColumnMapping, job.hs_ticket_url ?? '')
+  )
+
+  return Response.json({ preview, totalRows: rows.length, columns: COLUMNS })
 }

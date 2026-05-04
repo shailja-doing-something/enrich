@@ -20,4 +20,5 @@ export const env = {
   get ZILLOW_ZIP_API_KEY() { return optional('ZILLOW_ZIP_API_KEY') },
   get STAGE2_DB_URL() { return optional('STAGE2_DB_URL') },
   get STAGE3_SCRAPE_URL() { return optional('STAGE3_SCRAPE_URL') },
+  get APP_URL() { return optional('APP_URL') },
 }
