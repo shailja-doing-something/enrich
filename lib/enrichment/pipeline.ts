@@ -1,108 +1,103 @@
 import { getRowsByJob, updateRow } from '../supabase/rows'
 import { updateJob } from '../supabase/jobs'
-import { runStage1 } from './stage1'
-import { runStage2 } from './stage2'
-import { runStage3 } from './stage3'
+import { runBranch1 } from './branch1-teamsize'
+import { runBranch2 } from './branch2-contact'
 
 export async function runEnrichmentPipeline(jobId: string): Promise<void> {
   try {
     const allRows = await getRowsByJob(jobId)
-    const pendingRows = allRows.filter(r => r.enrichment_status === 'pending')
 
-    if (pendingRows.length === 0) {
+    if (allRows.length === 0) {
       await updateJob(jobId, { status: 'complete' })
       return
     }
 
-    // Stage 1
-    await updateJob(jobId, { status: 'stage1_running' })
-    const stage1Results = await runStage1(pendingRows)
-    let stage1Found = 0
+    await updateJob(jobId, {
+      status: 'both_running',
+      branch1_status: 'running',
+      branch2_status: 'running',
+    })
 
-    for (const result of stage1Results) {
-      if (result.found) {
-        stage1Found++
-        await updateRow(result.row.id, {
-          enrichment_status: 'found',
-          stage_reached: 1,
-          enriched_data: result.enrichedData,
-        })
-      } else {
-        await updateRow(result.row.id, {
-          enrichment_status: 'not_found',
-          stage_reached: 1,
-        })
-      }
+    const [branch1Results, branch2Results] = await Promise.all([
+      runBranch1(allRows),
+      runBranch2(allRows),
+    ])
+
+    // Write Branch 1 results
+    let branch1FoundCount = 0
+    for (const result of branch1Results) {
+      if (result.found) branch1FoundCount++
+      await updateRow(result.row.id, {
+        team_size_data: result.data,
+        branch1_status: result.found ? 'found' : 'not_found',
+      })
+    }
+
+    // Write Branch 2 results
+    let branch2FoundCount = 0
+    for (const result of branch2Results) {
+      if (result.found) branch2FoundCount++
+      await updateRow(result.row.id, {
+        contact_data: result.data,
+        branch2_status: result.found ? 'found' : 'not_found',
+      })
     }
 
     await updateJob(jobId, {
-      stage1_completed_at: new Date().toISOString(),
-      stage1_found_count: stage1Found,
+      branch1_status: 'complete',
+      branch2_status: 'complete',
+      branch1_completed_at: new Date().toISOString(),
+      branch2_completed_at: new Date().toISOString(),
+      branch1_found_count: branch1FoundCount,
+      branch2_found_count: branch2FoundCount,
+      status: 'merging',
     })
 
-    const stage2Rows = stage1Results.filter(r => !r.found).map(r => r.row)
-    if (stage2Rows.length === 0) {
-      await updateJob(jobId, { status: 'complete' })
-      return
-    }
+    // Merge results into a single merged_data per row
+    const branch1Map = new Map(branch1Results.map(r => [r.row.id, r.data]))
+    const branch2Map = new Map(branch2Results.map(r => [r.row.id, r.data]))
 
-    // Stage 2
-    await updateJob(jobId, { status: 'stage2_running' })
-    const stage2Results = await runStage2(stage2Rows)
-    let stage2Found = 0
+    for (const row of allRows) {
+      const teamData = branch1Map.get(row.id) ?? null
+      const contactData = branch2Map.get(row.id) ?? null
+      const fi = row.formatted_input
 
-    for (const result of stage2Results) {
-      if (result.found) {
-        stage2Found++
-        await updateRow(result.row.id, {
-          enrichment_status: 'found',
-          stage_reached: 2,
-          enriched_data: result.enrichedData,
-        })
-      } else {
-        await updateRow(result.row.id, {
-          enrichment_status: 'not_found',
-          stage_reached: 2,
-        })
+      const merged: Record<string, unknown> = {
+        // identity
+        name: fi?.name ?? null,
+        email: fi?.email ?? null,
+        phone: fi?.phone ?? null,
+        location: fi?.location ?? null,
+        hs_ticket_url: row.hs_ticket_url,
+
+        // team size (branch 1)
+        team_size_count: teamData?.team_size_count ?? null,
+        team_size_category: teamData?.team_size_category ?? null,
+        team_name_enriched: teamData?.team_name ?? null,
+        brokerage_enriched: teamData?.brokerage_name ?? null,
+        team_page_url: teamData?.team_page_url ?? null,
+        homepage_url: teamData?.homepage_url ?? null,
+        confidence: teamData?.confidence ?? null,
+        team_members: teamData?.team_members ?? null,
+
+        // contact (branch 2)
+        zillow_profile: contactData?.profile_link ?? null,
+        zillow_rating: contactData?.rating_average ?? null,
+        zillow_reviews: contactData?.rating_count ?? null,
+        zillow_sales_12m: contactData?.sales_last_12_months ?? null,
+        zillow_sales_total: contactData?.sales_total ?? null,
+        zillow_is_top_agent: contactData?.is_top_agent ?? null,
+        zillow_is_team: contactData?.is_team ?? null,
+        contact_source: contactData?.source ?? null,
+
+        // metadata
+        enriched_at: new Date().toISOString(),
+        branch1_found: !!teamData,
+        branch2_found: !!contactData,
       }
+
+      await updateRow(row.id, { merged_data: merged })
     }
-
-    await updateJob(jobId, {
-      stage2_completed_at: new Date().toISOString(),
-      stage2_found_count: stage2Found,
-    })
-
-    const stage3Rows = stage2Results.filter(r => !r.found).map(r => r.row)
-    if (stage3Rows.length === 0) {
-      await updateJob(jobId, { status: 'complete' })
-      return
-    }
-
-    // Stage 3
-    await updateJob(jobId, { status: 'stage3_running' })
-    const stage3Results = await runStage3(stage3Rows)
-    let stage3Found = 0
-
-    for (const result of stage3Results) {
-      if (result.found) {
-        stage3Found++
-        await updateRow(result.row.id, {
-          enrichment_status: 'found',
-          stage_reached: 3,
-          enriched_data: result.enrichedData,
-        })
-      } else {
-        await updateRow(result.row.id, {
-          enrichment_status: 'not_found',
-          stage_reached: 3,
-        })
-      }
-    }
-
-    await updateJob(jobId, {
-      stage3_completed_at: new Date().toISOString(),
-      stage3_found_count: stage3Found,
-    })
 
     await updateJob(jobId, { status: 'complete' })
   } catch (e) {

@@ -46,7 +46,7 @@ export default function JobPage() {
           setJob(data)
 
           // Prevent auto-run firing on jobs already running or complete
-          if (['stage1_running', 'stage2_running', 'stage3_running', 'complete'].includes(data.status)) {
+          if (['stage1_running', 'stage2_running', 'both_running', 'branch1_running', 'branch2_running', 'merging', 'complete'].includes(data.status)) {
             autoRunFiredRef.current = true
           }
 
@@ -90,7 +90,7 @@ export default function JobPage() {
   // Fetch rows when job reaches ready or complete
   useEffect(() => {
     if (!job) return
-    if (job.status !== 'ready' && job.status !== 'complete') return
+    if (job.status !== 'ready' && job.status !== 'complete' && job.status !== 'merging') return
     fetch(`/api/enrich/jobs/${jobId}/rows`, { cache: 'no-store' })
       .then(r => r.json())
       .then(data => {
@@ -224,58 +224,80 @@ export default function JobPage() {
 
   // COMPLETE — STATE E
   if (status === 'complete') {
-    const foundRows = allRows.filter(r => r.enrichment_status === 'found')
-    const notFoundRows = allRows.filter(r => r.enrichment_status === 'not_found')
+    const b1Found = allRows.filter(r => r.branch1_status === 'found')
+    const b2Found = allRows.filter(r => r.branch2_status === 'found')
+    const bothFound = allRows.filter(r => r.branch1_status === 'found' && r.branch2_status === 'found')
+    const neitherFound = allRows.filter(r => r.branch1_status !== 'found' && r.branch2_status !== 'found')
     const displayRows = showAllRows ? allRows : allRows.slice(0, 10)
+    const cell: React.CSSProperties = { padding: '0.5rem 0.75rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
     return (
       <div style={{ padding: '2rem' }}>
         <a href="/">← Back to dashboard</a>
         <h2 style={{ marginTop: '1rem' }}>Enrichment complete</h2>
-        <div style={{ display: 'flex', gap: '2rem', marginTop: '1rem', flexWrap: 'wrap', fontSize: '14px' }}>
-          <p>Stage 1: <strong>{job.stage1_found_count ?? 0}</strong> found</p>
-          <p>Stage 2: <strong>{job.stage2_found_count ?? 0}</strong> found</p>
-          <p>Stage 3: <strong>{job.stage3_found_count ?? 0}</strong> found</p>
-          <p>Not found: <strong>{notFoundRows.length}</strong></p>
+
+        <div style={{ display: 'flex', gap: '1rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
+          {[
+            { label: 'Team size found', value: b1Found.length },
+            { label: 'Contact found', value: b2Found.length },
+            { label: 'Both found', value: bothFound.length },
+            { label: 'Neither found', value: neitherFound.length },
+          ].map(({ label, value }) => (
+            <div key={label} style={{ padding: '1rem 1.25rem', border: '1px solid #e5e7eb', borderRadius: '8px', minWidth: '130px' }}>
+              <p style={{ fontSize: '22px', fontWeight: 700 }}>{value}</p>
+              <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '0.25rem' }}>{label}</p>
+            </div>
+          ))}
         </div>
-        <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem' }}>
+
+        <div style={{ marginTop: '1.25rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button onClick={() => downloadCSV(
-            foundRows.map(r => r.enriched_data ?? {}),
-            `enriched-found-${jobId}.csv`
-          )}>Download enriched ({foundRows.length} rows)</button>
+            allRows.map(r => (r.merged_data ?? {}) as Record<string, unknown>),
+            `enriched-complete-${jobId}.csv`
+          )}>Download all enriched ({allRows.length} rows)</button>
           <button onClick={() => downloadCSV(
-            notFoundRows.map(r => (r.formatted_input ?? {}) as Record<string, unknown>),
-            `not-found-${jobId}.csv`
-          )}>Download not found ({notFoundRows.length} rows)</button>
+            b1Found.map(r => (r.team_size_data ?? {}) as Record<string, unknown>),
+            `enriched-teamsize-${jobId}.csv`
+          )}>Download team size only ({b1Found.length} rows)</button>
+          <button onClick={() => downloadCSV(
+            b2Found.map(r => (r.contact_data ?? {}) as Record<string, unknown>),
+            `enriched-contact-${jobId}.csv`
+          )}>Download contact only ({b2Found.length} rows)</button>
         </div>
+
         <div style={{ overflowX: 'auto', marginTop: '1.5rem' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Name</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Email</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Status</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Stage</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Source</th>
+                {['Name', 'Email', 'Team size', 'Count', 'Brokerage', 'Contact source', 'Zillow rating', 'B1', 'B2'].map(h => (
+                  <th key={h} style={{ textAlign: 'left', padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {displayRows.map((row, i) => (
-                <tr key={i} style={{ borderBottom: '1px solid #f5f5f5' }}>
-                  <td style={{ padding: '0.5rem 0.75rem' }}>{row.formatted_input?.name || '—'}</td>
-                  <td style={{ padding: '0.5rem 0.75rem' }}>{row.formatted_input?.email || '—'}</td>
-                  <td style={{ padding: '0.5rem 0.75rem' }}>
-                    <span style={{
-                      padding: '2px 8px', borderRadius: '4px', fontSize: '12px',
-                      background: row.enrichment_status === 'found' ? '#dcfce7' : row.enrichment_status === 'not_found' ? '#fee2e2' : '#f3f4f6',
-                      color: row.enrichment_status === 'found' ? '#166534' : row.enrichment_status === 'not_found' ? '#991b1b' : '#6b7280',
-                    }}>
-                      {row.enrichment_status.replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td style={{ padding: '0.5rem 0.75rem' }}>{row.stage_reached ?? '—'}</td>
-                  <td style={{ padding: '0.5rem 0.75rem' }}>{(row.enriched_data?.source as string | undefined) ?? '—'}</td>
-                </tr>
-              ))}
+              {displayRows.map((row, i) => {
+                const m = row.merged_data ?? {}
+                return (
+                  <tr key={i} style={{ borderBottom: '1px solid #f5f5f5' }}>
+                    <td style={cell}>{String(m.name ?? row.formatted_input?.name ?? '—')}</td>
+                    <td style={cell}>{String(m.email ?? row.formatted_input?.email ?? '—')}</td>
+                    <td style={cell}>{String(m.team_size_category ?? '—')}</td>
+                    <td style={cell}>{String(m.team_size_count ?? '—')}</td>
+                    <td style={cell}>{String(m.brokerage_enriched ?? '—')}</td>
+                    <td style={cell}>{String(m.contact_source ?? '—')}</td>
+                    <td style={cell}>{String(m.zillow_rating ?? '—')}</td>
+                    <td style={cell}>
+                      <span style={{ color: row.branch1_status === 'found' ? '#166534' : '#9ca3af' }}>
+                        {row.branch1_status === 'found' ? '✓' : '✗'}
+                      </span>
+                    </td>
+                    <td style={cell}>
+                      <span style={{ color: row.branch2_status === 'found' ? '#166534' : '#9ca3af' }}>
+                        {row.branch2_status === 'found' ? '✓' : '✗'}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -292,19 +314,43 @@ export default function JobPage() {
   }
 
   // PIPELINE RUNNING — STATE D
-  if (['stage1_running', 'stage2_running', 'stage3_running'].includes(status) || runningLocally) {
-    const s1Done = status === 'stage2_running' || status === 'stage3_running'
-    const s2Done = status === 'stage3_running'
+  if (['stage1_running', 'stage2_running', 'both_running', 'branch1_running', 'branch2_running', 'merging'].includes(status) || runningLocally) {
+    const b1 = job.branch1_status ?? 'running'
+    const b2 = job.branch2_status ?? 'running'
+    const b1Done = b1 === 'complete'
+    const b2Done = b2 === 'complete'
     return (
       <div style={{ padding: '2rem' }}>
         <a href="/">← Back to dashboard</a>
         <h2 style={{ marginTop: '1rem' }}>Enrichment running</h2>
-        <p style={{ color: '#6b7280', marginTop: '0.25rem', fontSize: '13px' }}>{job.raw_row_count ?? 0} rows being processed</p>
-        <div style={{ marginTop: '1.5rem', lineHeight: '2.5', fontSize: '14px' }}>
-          <p>{s1Done ? '✓' : '⟳'} Stage 1 — Platform search{s1Done && job.stage1_found_count != null ? ` — ${job.stage1_found_count} found` : ''}</p>
-          <p>{s2Done ? '✓' : status === 'stage2_running' ? '⟳' : '○'} Stage 2 — Database lookup{s2Done && job.stage2_found_count != null ? ` — ${job.stage2_found_count} found` : ''}</p>
-          <p>{status === 'stage3_running' ? '⟳' : '○'} Stage 3 — Scrape enrichment</p>
+        <p style={{ color: '#6b7280', marginTop: '0.25rem', fontSize: '13px' }}>{job.raw_row_count ?? 0} rows · both branches running in parallel</p>
+        <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ padding: '1.25rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <p style={{ fontWeight: 600, fontSize: '14px' }}>Branch 1 — Team Size Enrichment</p>
+              <span style={{ fontSize: '13px', color: b1Done ? '#166534' : b1 === 'failed' ? '#991b1b' : '#2563eb' }}>
+                {b1Done ? '✓ Complete' : b1 === 'failed' ? '✗ Failed' : '⟳ Running'}
+              </span>
+            </div>
+            <p style={{ marginTop: '0.5rem', fontSize: '13px', color: '#6b7280' }}>
+              {b1Done ? `${job.branch1_found_count ?? 0} rows found` : 'Submitting to n8n · polling for results…'}
+            </p>
+          </div>
+          <div style={{ padding: '1.25rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <p style={{ fontWeight: 600, fontSize: '14px' }}>Branch 2 — Contact Enrichment</p>
+              <span style={{ fontSize: '13px', color: b2Done ? '#166534' : b2 === 'failed' ? '#991b1b' : '#2563eb' }}>
+                {b2Done ? '✓ Complete' : b2 === 'failed' ? '✗ Failed' : '⟳ Running'}
+              </span>
+            </div>
+            <p style={{ marginTop: '0.5rem', fontSize: '13px', color: '#6b7280' }}>
+              {b2Done ? `${job.branch2_found_count ?? 0} rows found` : 'Zillow ZIP → mad.agents…'}
+            </p>
+          </div>
         </div>
+        {status === 'merging' && (
+          <p style={{ marginTop: '1.5rem', color: '#6b7280', fontSize: '13px' }}>⟳ Merging results…</p>
+        )}
       </div>
     )
   }

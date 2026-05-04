@@ -38,13 +38,14 @@ export type EnrichJob = {
   hs_ticket_url: string | null
   status: 'pending' | 'parsing' | 'mapping' | 'awaiting_confirmation' |
           'generating' | 'ready' | 'stage1_running' | 'stage2_running' |
-          'stage3_running' | 'complete' | 'failed'
-  stage1_completed_at: string | null
-  stage2_completed_at: string | null
-  stage3_completed_at: string | null
-  stage1_found_count: number | null
-  stage2_found_count: number | null
-  stage3_found_count: number | null
+          'both_running' | 'branch1_running' | 'branch2_running' |
+          'merging' | 'complete' | 'failed'
+  branch1_status: 'idle' | 'running' | 'complete' | 'failed'
+  branch2_status: 'idle' | 'running' | 'complete' | 'failed'
+  branch1_completed_at: string | null
+  branch2_completed_at: string | null
+  branch1_found_count: number | null
+  branch2_found_count: number | null
   hubspot_written_at: string | null
   error_log: string | null
 }
@@ -59,6 +60,11 @@ export type EnrichRow = {
   enriched_data: Record<string, unknown> | null
   enrichment_status: 'pending' | 'found' | 'not_found'
   stage_reached: number | null
+  team_size_data: Record<string, unknown> | null
+  contact_data: Record<string, unknown> | null
+  branch1_status: 'pending' | 'running' | 'found' | 'not_found' | 'failed'
+  branch2_status: 'pending' | 'running' | 'found' | 'not_found' | 'failed'
+  merged_data: Record<string, unknown> | null
 }
 
 export type InsertEnrichRow = {

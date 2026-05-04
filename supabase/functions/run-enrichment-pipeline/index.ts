@@ -5,6 +5,14 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const ZILLOW_API_KEY = Deno.env.get('ZILLOW_ZIP_API_KEY') ?? ''
 
+const WEBHOOK_URL = 'https://fello-ai.app.n8n.cloud/webhook/scrappy2'
+const STATUS_BASE = 'https://team-size-webhook-production.up.railway.app/api/v1/enrich/tasks'
+const ZILLOW_ZIP_BASE = 'https://zillow-zip.up.railway.app'
+
+// Reduced for 150s Edge Function timeout (~100s max per row for Branch 1)
+const BRANCH1_MAX_POLLS = 20
+const POLL_INTERVAL_MS = 5000
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 // ── Inline types ──────────────────────────────────────────────────────────────
@@ -21,15 +29,6 @@ type EnrichRow = {
   hs_ticket_url: string
   raw_data: Record<string, string>
   formatted_input: GenericFormattedRow | null
-  enriched_data: Record<string, unknown> | null
-  enrichment_status: 'pending' | 'found' | 'not_found'
-  stage_reached: number | null
-}
-
-type StageResult = {
-  row: EnrichRow
-  found: boolean
-  enrichedData: Record<string, unknown> | null
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
@@ -44,9 +43,104 @@ async function dbUpdateJob(id: string, fields: Record<string, unknown>) {
   if (error) throw new Error(`Failed to update job ${id}: ${error.message}`)
 }
 
-// ── Stage 1: real Zillow ZIP API ──────────────────────────────────────────────
+// ── Branch 1: Team Size via n8n webhook + polling ────────────────────────────
 
-const ZILLOW_ZIP_BASE = 'https://zillow-zip.up.railway.app'
+type TeamSizeResult = {
+  rowId: string
+  found: boolean
+  taskId: string | null
+  data: Record<string, unknown> | null
+}
+
+async function enrichTeamSizeRow(row: EnrichRow): Promise<TeamSizeResult> {
+  const fi = row.formatted_input
+  if (!fi) return { rowId: row.id, found: false, taskId: null, data: null }
+
+  const nameParts = (fi.name ?? '').trim().split(/\s+/)
+  const firstName = nameParts[0] ?? ''
+  const lastName = nameParts.slice(1).join(' ')
+
+  let taskId: string | null = null
+  try {
+    const res = await fetch(WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: fi.email,
+        phone: fi.phone,
+        company: fi.team_name || fi.brokerage,
+        website: fi.website,
+        firstname: firstName,
+        lastname: lastName,
+        team_name: fi.team_name,
+        hs_object_id: row.hs_ticket_url,
+      }),
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!res.ok) return { rowId: row.id, found: false, taskId: null, data: null }
+    const json = await res.json() as Record<string, unknown>
+    taskId = (json.task_id ?? json.taskId ?? null) as string | null
+  } catch {
+    return { rowId: row.id, found: false, taskId: null, data: null }
+  }
+
+  if (!taskId) return { rowId: row.id, found: false, taskId: null, data: null }
+
+  for (let i = 0; i < BRANCH1_MAX_POLLS; i++) {
+    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
+    try {
+      const res = await fetch(`${STATUS_BASE}/${taskId}`, { signal: AbortSignal.timeout(10000) })
+      if (!res.ok) continue
+      const json = await res.json() as Record<string, unknown>
+      if (json.ready === true && json.status === 'success') {
+        const result = json.result as Record<string, unknown>
+        return {
+          rowId: row.id,
+          found: true,
+          taskId,
+          data: {
+            source: 'team_size_webhook',
+            task_id: taskId,
+            fetched_at: new Date().toISOString(),
+            team_size_count: result.team_size_count,
+            team_size_category: result.team_size_category,
+            team_name: result.team_name,
+            brokerage_name: result.brokerage_name,
+            homepage_url: result.homepage_url,
+            team_page_url: result.team_page_url,
+            confidence: result.confidence,
+            reasoning: result.reasoning,
+            agent_id: result.agent_id,
+            agent_designation: result.agent_designation,
+            detected_crms: result.detected_crms,
+            team_members: result.team_members,
+          },
+        }
+      }
+    } catch {
+      // transient — keep polling
+    }
+  }
+
+  return { rowId: row.id, found: false, taskId, data: null }
+}
+
+async function runBranch1(rows: EnrichRow[]): Promise<TeamSizeResult[]> {
+  const results: TeamSizeResult[] = []
+  for (const row of rows) {
+    results.push(await enrichTeamSizeRow(row))
+  }
+  return results
+}
+
+// ── Branch 2: Contact via Zillow ZIP + mad.agents ────────────────────────────
+
+type ContactResult = {
+  rowId: string
+  found: boolean
+  source: 'zillow_zip' | 'mad_agents' | null
+  data: Record<string, unknown> | null
+}
 
 function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '')
@@ -54,12 +148,11 @@ function normalizePhone(phone: string): string {
 
 async function searchZillow(
   params: URLSearchParams,
-  endpoint: string,
-  apiKey: string
+  endpoint: string
 ): Promise<{ results: Record<string, unknown>[]; total: number } | null> {
   try {
     const res = await fetch(`${ZILLOW_ZIP_BASE}${endpoint}?${params}`, {
-      headers: { 'X-API-Key': apiKey },
+      headers: { 'X-API-Key': ZILLOW_API_KEY },
       signal: AbortSignal.timeout(15000),
     })
     if (!res.ok) return null
@@ -69,117 +162,84 @@ async function searchZillow(
   }
 }
 
-async function enrichOneRow(row: EnrichRow, apiKey: string): Promise<StageResult> {
+async function lookupZillow(row: EnrichRow): Promise<ContactResult | null> {
   const fi = row.formatted_input
   const email = fi?.email ?? ''
   const phone = normalizePhone(fi?.phone ?? '')
 
   if (email) {
     const params = new URLSearchParams({ email, exact: 'true', limit: '1' })
-    const data = await searchZillow(params, '/api/agents/by-email', apiKey)
+    const data = await searchZillow(params, '/api/agents/by-email')
     if (data && data.total > 0) {
       return {
-        row,
-        found: true,
-        enrichedData: {
-          ...data.results[0],
-          source: 'zillow_zip',
-          stage: 1,
-          matched_on: 'email',
-          fetched_at: new Date().toISOString(),
-        },
+        rowId: row.id, found: true, source: 'zillow_zip',
+        data: { ...data.results[0], source: 'zillow_zip', matched_on: 'email', fetched_at: new Date().toISOString() },
       }
     }
   }
 
   if (phone) {
     const params = new URLSearchParams({ phone, limit: '1' })
-    const data = await searchZillow(params, '/api/agents/by-phone', apiKey)
+    const data = await searchZillow(params, '/api/agents/by-phone')
     if (data && data.total > 0) {
       return {
-        row,
-        found: true,
-        enrichedData: {
-          ...data.results[0],
-          source: 'zillow_zip',
-          stage: 1,
-          matched_on: 'phone',
-          fetched_at: new Date().toISOString(),
-        },
+        rowId: row.id, found: true, source: 'zillow_zip',
+        data: { ...data.results[0], source: 'zillow_zip', matched_on: 'phone', fetched_at: new Date().toISOString() },
       }
     }
   }
 
-  return { row, found: false, enrichedData: null }
+  return null
 }
 
-async function runStage1Real(rows: EnrichRow[], apiKey: string): Promise<StageResult[]> {
-  const results: StageResult[] = []
-  const BATCH_SIZE = 5
-  const DELAY_MS = 500
+async function lookupMadAgents(row: EnrichRow): Promise<ContactResult | null> {
+  const fi = row.formatted_input
+  const email = fi?.email ?? ''
+  const phone = normalizePhone(fi?.phone ?? '')
 
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE)
-    const batchResults = await Promise.all(batch.map(row => enrichOneRow(row, apiKey)))
-    results.push(...batchResults)
-
-    if (i + BATCH_SIZE < rows.length) {
-      await new Promise(r => setTimeout(r, DELAY_MS))
+  if (email) {
+    const { data, error } = await supabase.schema('mad').from('agents').select('*').eq('email', email).limit(1)
+    if (!error && data && data.length > 0) {
+      return {
+        rowId: row.id, found: true, source: 'mad_agents',
+        data: { ...data[0], source: 'mad_agents', matched_on: 'email', fetched_at: new Date().toISOString() },
+      }
     }
   }
 
-  return results
-}
-
-async function runStage2Mock(rows: EnrichRow[]): Promise<StageResult[]> {
-  const results: StageResult[] = []
-
-  for (const row of rows) {
-    await new Promise(r => setTimeout(r, 10))
-
-    const found = Math.random() > 0.7
-    const fi = row.formatted_input
-
-    results.push({
-      row,
-      found,
-      enrichedData: found ? {
-        source: 'internal_db',
-        stage: 2,
-        full_name: fi?.name,
-        email: fi?.email,
-        phone: fi?.phone,
-        team_name: fi?.team_name,
-        fetched_at: new Date().toISOString(),
-      } : null,
-    })
+  if (phone) {
+    const { data, error } = await supabase.schema('mad').from('agents').select('*').eq('phone', phone).limit(1)
+    if (!error && data && data.length > 0) {
+      return {
+        rowId: row.id, found: true, source: 'mad_agents',
+        data: { ...data[0], source: 'mad_agents', matched_on: 'phone', fetched_at: new Date().toISOString() },
+      }
+    }
   }
 
-  return results
+  return null
 }
 
-async function runStage3Mock(rows: EnrichRow[]): Promise<StageResult[]> {
-  const results: StageResult[] = []
+async function enrichContactRow(row: EnrichRow): Promise<ContactResult> {
+  const zillowResult = await lookupZillow(row)
+  if (zillowResult) return zillowResult
+  const madResult = await lookupMadAgents(row)
+  if (madResult) return madResult
+  return { rowId: row.id, found: false, source: null, data: null }
+}
 
-  for (const row of rows) {
-    await new Promise(r => setTimeout(r, 10))
+async function runBranch2(rows: EnrichRow[]): Promise<ContactResult[]> {
+  const BATCH_SIZE = 5
+  const DELAY_MS = 500
+  const results: ContactResult[] = []
 
-    const found = Math.random() > 0.6
-    const fi = row.formatted_input
-
-    results.push({
-      row,
-      found,
-      enrichedData: found ? {
-        source: 'scrape_endpoint',
-        stage: 3,
-        full_name: fi?.name,
-        email: fi?.email,
-        team_name: fi?.team_name,
-        team_size: Math.floor(Math.random() * 50) + 1,
-        fetched_at: new Date().toISOString(),
-      } : null,
-    })
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE)
+    const batchResults = await Promise.all(batch.map(enrichContactRow))
+    results.push(...batchResults)
+    if (i + BATCH_SIZE < rows.length) {
+      await new Promise(r => setTimeout(r, DELAY_MS))
+    }
   }
 
   return results
@@ -189,7 +249,7 @@ async function runStage3Mock(rows: EnrichRow[]): Promise<StageResult[]> {
 
 async function runPipeline(jobId: string) {
   try {
-    const { data: allRows, error: rowsErr } = await supabase
+    const { data: allRowsData, error: rowsErr } = await supabase
       .from('enrich_rows')
       .select('*')
       .eq('job_id', jobId)
@@ -197,93 +257,92 @@ async function runPipeline(jobId: string) {
 
     if (rowsErr) throw new Error(`Failed to fetch rows: ${rowsErr.message}`)
 
-    const pendingRows = ((allRows ?? []) as EnrichRow[]).filter(r => r.enrichment_status === 'pending')
+    const allRows = (allRowsData ?? []) as EnrichRow[]
 
-    if (pendingRows.length === 0) {
+    if (allRows.length === 0) {
       await dbUpdateJob(jobId, { status: 'complete' })
       return
     }
 
-    // Stage 1
-    await dbUpdateJob(jobId, { status: 'stage1_running' })
-    const stage1Results = await runStage1Real(pendingRows, ZILLOW_API_KEY)
-    let stage1Found = 0
+    await dbUpdateJob(jobId, {
+      status: 'both_running',
+      branch1_status: 'running',
+      branch2_status: 'running',
+    })
 
-    for (const result of stage1Results) {
-      if (result.found) {
-        stage1Found++
-        await dbUpdateRow(result.row.id, {
-          enrichment_status: 'found',
-          stage_reached: 1,
-          enriched_data: result.enrichedData,
-        })
-      } else {
-        await dbUpdateRow(result.row.id, { enrichment_status: 'not_found', stage_reached: 1 })
-      }
+    const [branch1Results, branch2Results] = await Promise.all([
+      runBranch1(allRows),
+      runBranch2(allRows),
+    ])
+
+    // Write Branch 1 results
+    let branch1FoundCount = 0
+    for (const result of branch1Results) {
+      if (result.found) branch1FoundCount++
+      await dbUpdateRow(result.rowId, {
+        team_size_data: result.data,
+        branch1_status: result.found ? 'found' : 'not_found',
+      })
+    }
+
+    // Write Branch 2 results
+    let branch2FoundCount = 0
+    for (const result of branch2Results) {
+      if (result.found) branch2FoundCount++
+      await dbUpdateRow(result.rowId, {
+        contact_data: result.data,
+        branch2_status: result.found ? 'found' : 'not_found',
+      })
     }
 
     await dbUpdateJob(jobId, {
-      stage1_completed_at: new Date().toISOString(),
-      stage1_found_count: stage1Found,
+      branch1_status: 'complete',
+      branch2_status: 'complete',
+      branch1_completed_at: new Date().toISOString(),
+      branch2_completed_at: new Date().toISOString(),
+      branch1_found_count: branch1FoundCount,
+      branch2_found_count: branch2FoundCount,
+      status: 'merging',
     })
 
-    const stage2Rows = stage1Results.filter(r => !r.found).map(r => r.row)
-    if (stage2Rows.length === 0) {
-      await dbUpdateJob(jobId, { status: 'complete' })
-      return
+    // Merge
+    const branch1Map = new Map(branch1Results.map(r => [r.rowId, r.data]))
+    const branch2Map = new Map(branch2Results.map(r => [r.rowId, r.data]))
+
+    for (const row of allRows) {
+      const teamData = branch1Map.get(row.id) ?? null
+      const contactData = branch2Map.get(row.id) ?? null
+      const fi = row.formatted_input
+
+      await dbUpdateRow(row.id, {
+        merged_data: {
+          name: fi?.name ?? null,
+          email: fi?.email ?? null,
+          phone: fi?.phone ?? null,
+          location: fi?.location ?? null,
+          hs_ticket_url: row.hs_ticket_url,
+          team_size_count: teamData?.team_size_count ?? null,
+          team_size_category: teamData?.team_size_category ?? null,
+          team_name_enriched: teamData?.team_name ?? null,
+          brokerage_enriched: teamData?.brokerage_name ?? null,
+          team_page_url: teamData?.team_page_url ?? null,
+          homepage_url: teamData?.homepage_url ?? null,
+          confidence: teamData?.confidence ?? null,
+          team_members: teamData?.team_members ?? null,
+          zillow_profile: contactData?.profile_link ?? null,
+          zillow_rating: contactData?.rating_average ?? null,
+          zillow_reviews: contactData?.rating_count ?? null,
+          zillow_sales_12m: contactData?.sales_last_12_months ?? null,
+          zillow_sales_total: contactData?.sales_total ?? null,
+          zillow_is_top_agent: contactData?.is_top_agent ?? null,
+          zillow_is_team: contactData?.is_team ?? null,
+          contact_source: contactData?.source ?? null,
+          enriched_at: new Date().toISOString(),
+          branch1_found: !!teamData,
+          branch2_found: !!contactData,
+        },
+      })
     }
-
-    // Stage 2
-    await dbUpdateJob(jobId, { status: 'stage2_running' })
-    const stage2Results = await runStage2Mock(stage2Rows)
-    let stage2Found = 0
-
-    for (const result of stage2Results) {
-      if (result.found) {
-        stage2Found++
-        await dbUpdateRow(result.row.id, {
-          enrichment_status: 'found',
-          stage_reached: 2,
-          enriched_data: result.enrichedData,
-        })
-      } else {
-        await dbUpdateRow(result.row.id, { enrichment_status: 'not_found', stage_reached: 2 })
-      }
-    }
-
-    await dbUpdateJob(jobId, {
-      stage2_completed_at: new Date().toISOString(),
-      stage2_found_count: stage2Found,
-    })
-
-    const stage3Rows = stage2Results.filter(r => !r.found).map(r => r.row)
-    if (stage3Rows.length === 0) {
-      await dbUpdateJob(jobId, { status: 'complete' })
-      return
-    }
-
-    // Stage 3
-    await dbUpdateJob(jobId, { status: 'stage3_running' })
-    const stage3Results = await runStage3Mock(stage3Rows)
-    let stage3Found = 0
-
-    for (const result of stage3Results) {
-      if (result.found) {
-        stage3Found++
-        await dbUpdateRow(result.row.id, {
-          enrichment_status: 'found',
-          stage_reached: 3,
-          enriched_data: result.enrichedData,
-        })
-      } else {
-        await dbUpdateRow(result.row.id, { enrichment_status: 'not_found', stage_reached: 3 })
-      }
-    }
-
-    await dbUpdateJob(jobId, {
-      stage3_completed_at: new Date().toISOString(),
-      stage3_found_count: stage3Found,
-    })
 
     await dbUpdateJob(jobId, { status: 'complete' })
   } catch (e) {
@@ -306,16 +365,10 @@ serve(async (req) => {
     const body = await req.json()
     jobId = body.jobId
     if (!jobId) {
-      return new Response(
-        JSON.stringify({ error: 'Missing jobId' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ error: 'Missing jobId' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
     }
   } catch {
-    return new Response(
-      JSON.stringify({ error: 'Invalid request body' }),
-      { status: 400, headers: { 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ error: 'Invalid request body' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
   const { data: job, error: jobErr } = await supabase
@@ -325,23 +378,18 @@ serve(async (req) => {
     .maybeSingle()
 
   if (jobErr || !job) {
-    return new Response(
-      JSON.stringify({ error: 'Job not found' }),
-      { status: 404, headers: { 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ error: 'Job not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
   }
 
-  if (job.status !== 'ready' && job.status !== 'stage1_running') {
+  const allowedStatuses = ['ready', 'stage1_running', 'both_running']
+  if (!allowedStatuses.includes(job.status)) {
     return new Response(
-      JSON.stringify({ error: `Job is not ready (current status: ${job.status})` }),
+      JSON.stringify({ error: `Job cannot be run (current status: ${job.status})` }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     )
   }
 
   await runPipeline(jobId)
 
-  return new Response(
-    JSON.stringify({ success: true, jobId }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
-  )
+  return new Response(JSON.stringify({ success: true, jobId }), { status: 200, headers: { 'Content-Type': 'application/json' } })
 })

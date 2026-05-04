@@ -15,14 +15,11 @@ function StatusBadge({ status }: { status: EnrichJob['status'] }) {
   if (status === 'ready') {
     return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Ready</span>
   }
-  if (status === 'stage1_running') {
-    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Stage 1</span>
+  if (['stage1_running', 'stage2_running', 'both_running', 'branch1_running', 'branch2_running'].includes(status)) {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Enriching</span>
   }
-  if (status === 'stage2_running') {
-    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Stage 2</span>
-  }
-  if (status === 'stage3_running') {
-    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Stage 3</span>
+  if (status === 'merging') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Merging</span>
   }
   if (status === 'complete') {
     return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-700 text-white">Complete</span>
