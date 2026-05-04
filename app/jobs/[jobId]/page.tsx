@@ -186,6 +186,25 @@ export default function JobPage() {
 
   // ── RENDER ────────────────────────────────────────────────────────────────────
 
+  const status = job?.status ?? ''
+
+  // FAILED — checked first so it renders even before the null guard below
+  if (status === 'failed') {
+    return (
+      <div style={{ padding: '2rem' }}>
+        <a href="/">← Back to dashboard</a>
+        <h2 style={{ color: 'red', marginTop: '1rem' }}>Job failed</h2>
+        {job?.error_log && (
+          <pre style={{ marginTop: '1rem', background: '#fee2e2', padding: '1rem', borderRadius: '8px', whiteSpace: 'pre-wrap' }}>
+            {job.error_log}
+          </pre>
+        )}
+        <a href="/" style={{ display: 'inline-block', marginTop: '1rem' }}>Start over</a>
+      </div>
+    )
+  }
+
+  // Loading — job not yet fetched (TypeScript: job is non-null for everything below)
   if (!job) {
     return (
       <div style={{ padding: '2rem' }}>
@@ -200,24 +219,6 @@ export default function JobPage() {
             <p>Loading job data...</p>
           </div>
         )}
-      </div>
-    )
-  }
-
-  const status = job.status
-
-  // FAILED
-  if (status === 'failed') {
-    return (
-      <div style={{ padding: '2rem' }}>
-        <a href="/">← Back to dashboard</a>
-        <h2 style={{ color: 'red', marginTop: '1rem' }}>Job failed</h2>
-        {job.error_log && (
-          <pre style={{ marginTop: '1rem', background: '#fee2e2', padding: '1rem', borderRadius: '8px', whiteSpace: 'pre-wrap' }}>
-            {job.error_log}
-          </pre>
-        )}
-        <a href="/" style={{ display: 'inline-block', marginTop: '1rem' }}>Start over</a>
       </div>
     )
   }
@@ -604,7 +605,7 @@ export default function JobPage() {
     <div style={{ padding: '2rem' }}>
       <a href="/">← Back to dashboard</a>
       <div style={{ marginTop: '4rem', textAlign: 'center' }}>
-        <p>{statusMessages[status] ?? 'Loading job data...'}</p>
+        <p>{statusMessages[status] ?? 'Processing…'}</p>
       </div>
     </div>
   )
