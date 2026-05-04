@@ -18,6 +18,7 @@ export default function JobPage() {
   const [networkError, setNetworkError] = useState(false)
   const [localMapping, setLocalMapping] = useState<ColumnMapping | null>(null)
   const [showAllRows, setShowAllRows] = useState(false)
+  const [runningLocally, setRunningLocally] = useState(false)
 
   const mountedRef = useRef(true)
   const failureCountRef = useRef(0)
@@ -43,6 +44,11 @@ export default function JobPage() {
           failureCountRef.current = 0
           setNetworkError(false)
           setJob(data)
+
+          // Prevent auto-run firing on jobs already running or complete
+          if (['stage1_running', 'stage2_running', 'stage3_running', 'complete'].includes(data.status)) {
+            autoRunFiredRef.current = true
+          }
 
           // Initialize localMapping once
           if (!localMappingInitRef.current && data.column_mapping) {
@@ -139,6 +145,21 @@ export default function JobPage() {
     } catch {
       setSaveError('Network error. Please try again.')
       setSaving(false)
+    }
+  }
+
+  const handleRun = async () => {
+    setRunningLocally(true)
+    try {
+      const res = await fetch(`/api/enrich/run/${jobId}/trigger`, { method: 'POST' })
+      if (!res.ok) {
+        setRunningLocally(false)
+        return
+      }
+      setJob(prev => prev ? { ...prev, status: 'stage1_running' } : prev)
+      fetch(`/api/enrich/run/${jobId}/fire`, { method: 'POST' }).catch(console.error)
+    } catch {
+      setRunningLocally(false)
     }
   }
 
@@ -271,7 +292,7 @@ export default function JobPage() {
   }
 
   // PIPELINE RUNNING — STATE D
-  if (status === 'stage1_running' || status === 'stage2_running' || status === 'stage3_running') {
+  if (['stage1_running', 'stage2_running', 'stage3_running'].includes(status) || runningLocally) {
     const s1Done = status === 'stage2_running' || status === 'stage3_running'
     const s2Done = status === 'stage3_running'
     return (
@@ -317,15 +338,7 @@ export default function JobPage() {
             `formatted-input-${jobId}.csv`
           )}>Download formatted CSV</button>
           <button
-            onClick={async () => {
-              autoRunFiredRef.current = true
-              setJob(prev => prev ? { ...prev, status: 'stage1_running' } : prev)
-              fetch('/api/enrich/auto-run', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jobId }),
-              }).catch(console.error)
-            }}
+            onClick={handleRun}
             style={{ background: '#2563eb', color: 'white', padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
           >
             Run Enrichment
