@@ -1,104 +1,103 @@
 import type { EnrichRow } from '../supabase/types'
 import { env } from '../env'
 
+const ZILLOW_ZIP_BASE = 'https://zillow-zip.up.railway.app'
+
 export type Stage1Result = {
   row: EnrichRow
   found: boolean
   enrichedData: Record<string, unknown> | null
-  matchedOn: 'name' | 'email' | 'both' | null
+  matchedOn: 'email' | 'phone' | null
 }
 
-const PERSONAL_DOMAINS = new Set(['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com'])
+function normalizePhone(phone: string): string {
+  return phone.replace(/\D/g, '')
+}
 
-export async function runStage1Mock(rows: EnrichRow[]): Promise<Stage1Result[]> {
-  const results: Stage1Result[] = []
-
-  for (const row of rows) {
-    await new Promise(r => setTimeout(r, 10))
-
-    const fi = row.formatted_input
-    const email = fi?.email ?? ''
-    const name = fi?.name ?? ''
-
-    const domain = email.split('@')[1] ?? ''
-    const hasRealDomain = domain.length > 0 && !PERSONAL_DOMAINS.has(domain)
-    const hasMultipleWords = name.trim().split(/\s+/).filter(Boolean).length > 1
-
-    let found = false
-    let matchedOn: Stage1Result['matchedOn'] = null
-
-    if (hasRealDomain) {
-      found = true
-      matchedOn = hasMultipleWords ? 'both' : 'email'
-    } else if (hasMultipleWords && Math.random() > 0.5) {
-      found = true
-      matchedOn = 'name'
-    }
-
-    results.push({
-      row,
-      found,
-      enrichedData: found ? {
-        source: 'zillow_zip',
-        stage: 1,
-        profile_link: 'https://www.zillow.com/profile/mock',
-        full_name: fi?.name,
-        email: fi?.email,
-        phone_cell: fi?.phone,
-        business_name: fi?.brokerage || fi?.team_name,
-        address_city: fi?.location,
-        matched_on: matchedOn,
-        fetched_at: new Date().toISOString(),
-      } : null,
-      matchedOn,
+async function searchZillow(
+  params: URLSearchParams,
+  endpoint: string,
+  apiKey: string
+): Promise<{ results: Record<string, unknown>[]; total: number } | null> {
+  try {
+    const res = await fetch(`${ZILLOW_ZIP_BASE}${endpoint}?${params}`, {
+      headers: { 'X-API-Key': apiKey },
+      signal: AbortSignal.timeout(15000),
     })
+    if (!res.ok) return null
+    return await res.json() as { results: Record<string, unknown>[]; total: number }
+  } catch {
+    return null
   }
-
-  return results
 }
 
-export async function runStage1Real(rows: EnrichRow[]): Promise<Stage1Result[]> {
-  const results: Stage1Result[] = []
+async function enrichOneRow(row: EnrichRow, apiKey: string): Promise<Stage1Result> {
+  const fi = row.formatted_input
+  const email = fi?.email ?? ''
+  const phone = normalizePhone(fi?.phone ?? '')
 
-  for (const row of rows) {
-    const fi = row.formatted_input
-    const name = fi?.name ?? ''
-    const email = fi?.email ?? ''
-
-    const params = new URLSearchParams({ name, email })
-    const res = await fetch(
-      `https://zillow-zip.up.railway.app/api/search?${params}`,
-      { headers: { 'x-internal-api-key': env.ZILLOW_ZIP_API_KEY } }
-    )
-
-    if (!res.ok) {
-      results.push({ row, found: false, enrichedData: null, matchedOn: null })
-      continue
-    }
-
-    const json = await res.json() as { results: Record<string, unknown>[]; total: number }
-
-    if (json.total === 0) {
-      results.push({ row, found: false, enrichedData: null, matchedOn: null })
-    } else {
-      results.push({
+  if (email) {
+    const params = new URLSearchParams({ email, exact: 'true', limit: '1' })
+    const data = await searchZillow(params, '/api/agents/by-email', apiKey)
+    if (data && data.total > 0) {
+      return {
         row,
         found: true,
         enrichedData: {
-          ...json.results[0],
+          ...data.results[0],
           source: 'zillow_zip',
           stage: 1,
+          matched_on: 'email',
           fetched_at: new Date().toISOString(),
         },
-        matchedOn: null,
-      })
+        matchedOn: 'email',
+      }
+    }
+  }
+
+  if (phone) {
+    const params = new URLSearchParams({ phone, limit: '1' })
+    const data = await searchZillow(params, '/api/agents/by-phone', apiKey)
+    if (data && data.total > 0) {
+      return {
+        row,
+        found: true,
+        enrichedData: {
+          ...data.results[0],
+          source: 'zillow_zip',
+          stage: 1,
+          matched_on: 'phone',
+          fetched_at: new Date().toISOString(),
+        },
+        matchedOn: 'phone',
+      }
+    }
+  }
+
+  return { row, found: false, enrichedData: null, matchedOn: null }
+}
+
+async function processBatch(
+  rows: EnrichRow[],
+  apiKey: string,
+  batchSize = 5,
+  delayMs = 500
+): Promise<Stage1Result[]> {
+  const results: Stage1Result[] = []
+
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const batch = rows.slice(i, i + batchSize)
+    const batchResults = await Promise.all(batch.map(row => enrichOneRow(row, apiKey)))
+    results.push(...batchResults)
+
+    if (i + batchSize < rows.length) {
+      await new Promise(r => setTimeout(r, delayMs))
     }
   }
 
   return results
 }
 
-// swap to runStage1Real when API key is ready
-export function runStage1(rows: EnrichRow[]): Promise<Stage1Result[]> {
-  return runStage1Mock(rows)
+export async function runStage1(rows: EnrichRow[]): Promise<Stage1Result[]> {
+  return processBatch(rows, env.ZILLOW_ZIP_API_KEY, 5, 500)
 }
