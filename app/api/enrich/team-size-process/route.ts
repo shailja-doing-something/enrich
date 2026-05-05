@@ -93,8 +93,8 @@ export async function POST(request: NextRequest) {
 
   let polls = 0
   let result: Record<string, unknown> | null = null
-  while (polls < 36) {
-    await new Promise(r => setTimeout(r, 5000))
+  while (polls < 24) {
+    await new Promise(r => setTimeout(r, 4000))
     try {
       const statusRes = await fetch(`${STATUS_BASE}/${taskId}`, {
         signal: AbortSignal.timeout(10000),

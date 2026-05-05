@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import { updateJob } from '@/lib/supabase/jobs'
+import { getJob, updateJob } from '@/lib/supabase/jobs'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { env } from '@/lib/env'
 import type { EnrichRow } from '@/lib/supabase/types'
@@ -20,6 +20,17 @@ export async function POST(request: NextRequest) {
 
   console.log('[TeamSizeRun] Called for job:', jobId)
   console.log('[TeamSizeRun] APP_URL:', process.env.NEXT_PUBLIC_APP_URL)
+
+  const job = await getJob(jobId)
+  if (!job) {
+    return Response.json({ error: 'Job not found' }, { status: 404 })
+  }
+  if (job.branch1_status === 'complete') {
+    return Response.json({ message: 'Branch 1 already complete' })
+  }
+  if (job.branch1_status === 'running') {
+    return Response.json({ message: 'Branch 1 already running' })
+  }
 
   const { data: rowsData, error: rowsErr } = await supabaseAdmin
     .from('enrich_rows')
