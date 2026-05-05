@@ -305,7 +305,7 @@ async function runPipeline(jobId: string) {
       status: 'merging',
     })
 
-    // Merge
+    // Merge — each row is best-effort; a single row failure does not abort completion
     const branch1Map = new Map(branch1Results.map(r => [r.rowId, r.data]))
     const branch2Map = new Map(branch2Results.map(r => [r.rowId, r.data]))
 
@@ -314,37 +314,47 @@ async function runPipeline(jobId: string) {
       const contactData = branch2Map.get(row.id) ?? null
       const fi = row.formatted_input
 
-      await dbUpdateRow(row.id, {
-        merged_data: {
-          name: fi?.name ?? null,
-          email: fi?.email ?? null,
-          phone: fi?.phone ?? null,
-          location: fi?.location ?? null,
-          hs_ticket_url: row.hs_ticket_url,
-          team_size_count: teamData?.team_size_count ?? null,
-          team_size_category: teamData?.team_size_category ?? null,
-          team_name_enriched: teamData?.team_name ?? null,
-          brokerage_enriched: teamData?.brokerage_name ?? null,
-          team_page_url: teamData?.team_page_url ?? null,
-          homepage_url: teamData?.homepage_url ?? null,
-          confidence: teamData?.confidence ?? null,
-          team_members: teamData?.team_members ?? null,
-          zillow_profile: contactData?.profile_link ?? null,
-          zillow_rating: contactData?.rating_average ?? null,
-          zillow_reviews: contactData?.rating_count ?? null,
-          zillow_sales_12m: contactData?.sales_last_12_months ?? null,
-          zillow_sales_total: contactData?.sales_total ?? null,
-          zillow_is_top_agent: contactData?.is_top_agent ?? null,
-          zillow_is_team: contactData?.is_team ?? null,
-          contact_source: contactData?.source ?? null,
-          enriched_at: new Date().toISOString(),
-          branch1_found: !!teamData,
-          branch2_found: !!contactData,
-        },
-      })
+      try {
+        await dbUpdateRow(row.id, {
+          merged_data: {
+            name: fi?.name ?? null,
+            email: fi?.email ?? null,
+            phone: fi?.phone ?? null,
+            location: fi?.location ?? null,
+            hs_ticket_url: row.hs_ticket_url,
+            team_size_count: teamData?.team_size_count ?? null,
+            team_size_category: teamData?.team_size_category ?? null,
+            team_name_enriched: teamData?.team_name ?? null,
+            brokerage_enriched: teamData?.brokerage_name ?? null,
+            team_page_url: teamData?.team_page_url ?? null,
+            homepage_url: teamData?.homepage_url ?? null,
+            confidence: teamData?.confidence ?? null,
+            team_members: teamData?.team_members ?? null,
+            zillow_profile: contactData?.profile_link ?? null,
+            zillow_rating: contactData?.rating_average ?? null,
+            zillow_reviews: contactData?.rating_count ?? null,
+            zillow_sales_12m: contactData?.sales_last_12_months ?? null,
+            zillow_sales_total: contactData?.sales_total ?? null,
+            zillow_is_top_agent: contactData?.is_top_agent ?? null,
+            zillow_is_team: contactData?.is_team ?? null,
+            contact_source: contactData?.source ?? null,
+            enriched_at: new Date().toISOString(),
+            branch1_found: !!teamData,
+            branch2_found: !!contactData,
+          },
+        })
+      } catch (mergeErr) {
+        // Log and continue — don't let one row abort the job
+        console.error(`Merge failed for row ${row.id}:`, mergeErr instanceof Error ? mergeErr.message : mergeErr)
+      }
     }
 
-    await dbUpdateJob(jobId, { status: 'complete' })
+    // Final status update is isolated so a merge row error can't prevent completion
+    try {
+      await dbUpdateJob(jobId, { status: 'complete' })
+    } catch (finalErr) {
+      console.error('Failed to set job complete:', finalErr instanceof Error ? finalErr.message : finalErr)
+    }
   } catch (e) {
     await dbUpdateJob(jobId, {
       status: 'failed',
