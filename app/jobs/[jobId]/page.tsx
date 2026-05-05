@@ -92,7 +92,30 @@ export default function JobPage() {
             })
           }
 
-          if (!TERMINAL.includes(data.status)) {
+          if (data.status === 'complete' && mountedRef.current) {
+            fetch(`/api/enrich/jobs/${jobId}/rows`, { cache: 'no-store' })
+              .then(r => r.json())
+              .then(rowData => {
+                if (mountedRef.current) {
+                  setAllRows(rowData.data ?? rowData ?? [])
+                }
+              })
+              .catch(() => {})
+          }
+
+          if (data.status === 'complete' || data.status === 'failed') {
+            timeoutId = setTimeout(async () => {
+              if (mountedRef.current) {
+                try {
+                  const finalRes = await fetch(`/api/enrich/status/${jobId}`, { cache: 'no-store' })
+                  if (finalRes.ok && mountedRef.current) {
+                    const finalData = await finalRes.json()
+                    setJob(finalData)
+                  }
+                } catch {}
+              }
+            }, 1000)
+          } else {
             timeoutId = setTimeout(poll, 2000)
           }
         }
