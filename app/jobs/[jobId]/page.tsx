@@ -350,7 +350,7 @@ export default function JobPage() {
   }
 
   // PIPELINE RUNNING — STATE D
-  if (['both_running', 'merging', 'stage1_running', 'stage2_running', 'stage3_running', 'branch1_running', 'branch2_running'].includes(status)) {
+  if (['both_running', 'merging', 'stage1_running', 'stage2_running', 'branch1_running', 'branch2_running'].includes(status)) {
     const b1 = job.branch1_status ?? 'running'
     const b2 = job.branch2_status ?? 'running'
     const b1Done = b1 === 'complete'
@@ -391,21 +391,8 @@ export default function JobPage() {
     )
   }
 
-  // READY — STATE C (transitional)
-  if (status === 'ready') {
-    // If user just confirmed: show spinner while auto-run fires
-    if (confirmedLocally) {
-      return (
-        <div style={{ padding: '2rem' }}>
-          <a href="/">← Back to dashboard</a>
-          <div style={{ marginTop: '4rem', textAlign: 'center' }}>
-            <p>Preparing enrichment...</p>
-            <p style={{ fontSize: '13px', color: '#888', marginTop: '0.5rem' }}>Starting the pipeline...</p>
-          </div>
-        </div>
-      )
-    }
-    // User navigated directly to a ready job — show preview and Run button
+  // READY — STATE C: user navigated directly — show preview and Run button
+  if (status === 'ready' && !confirmedLocally) {
     const displayRows = showAllRows ? allRows : allRows.slice(0, 5)
     const sampleRow = allRows[0]?.formatted_input
     return (
@@ -460,6 +447,19 @@ export default function JobPage() {
               {showAllRows ? 'Show fewer rows' : `View all ${allRows.length} rows`}
             </button>
           )}
+        </div>
+      </div>
+    )
+  }
+
+  // READY — user just confirmed: show spinner while auto-run fires
+  if (status === 'ready' && confirmedLocally) {
+    return (
+      <div style={{ padding: '2rem' }}>
+        <a href="/">← Back to dashboard</a>
+        <div style={{ marginTop: '4rem', textAlign: 'center' }}>
+          <p>Preparing enrichment...</p>
+          <p style={{ fontSize: '13px', color: '#888', marginTop: '0.5rem' }}>Starting the pipeline...</p>
         </div>
       </div>
     )
