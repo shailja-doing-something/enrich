@@ -10,7 +10,6 @@ export async function GET(_request: NextRequest) {
     const { data: jobs, error } = await supabaseAdmin
       .from('enrich_jobs')
       .select('*')
-      .not('status', 'eq', 'failed')
       .order('created_at', { ascending: false })
 
     if (error) {

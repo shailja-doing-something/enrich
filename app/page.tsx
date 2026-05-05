@@ -5,18 +5,11 @@ import { useRouter } from 'next/navigation'
 import type { EnrichJob } from '@/lib/supabase/types'
 
 function StatusBadge({ status }: { status: EnrichJob['status'] }) {
-  const processing = ['pending', 'parsing', 'mapping', 'generating']
-  if (processing.includes(status)) {
-    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">Processing</span>
-  }
-  if (status === 'awaiting_confirmation') {
-    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">Needs review</span>
-  }
-  if (status === 'ready') {
-    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Ready</span>
+  if (status === 'failed') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Failed</span>
   }
   if (['stage1_running', 'stage2_running', 'both_running', 'branch1_running', 'branch2_running'].includes(status)) {
-    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Enriching</span>
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Running</span>
   }
   if (status === 'merging') {
     return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Merging</span>
@@ -24,8 +17,17 @@ function StatusBadge({ status }: { status: EnrichJob['status'] }) {
   if (status === 'complete') {
     return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-700 text-white">Complete</span>
   }
-  if (status === 'failed') {
-    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Failed</span>
+  if (status === 'ready') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Ready</span>
+  }
+  if (status === 'generating') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">Generating</span>
+  }
+  if (status === 'awaiting_confirmation') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">Needs review</span>
+  }
+  if (['pending', 'parsing', 'mapping'].includes(status)) {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">Processing</span>
   }
   return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">{status}</span>
 }
@@ -69,7 +71,7 @@ export default function DashboardPage() {
       if (!res.ok) return
       const json = await res.json()
       const jobs = json.data ?? json ?? []
-      setJobs((jobs as EnrichJob[]).filter((j) => j.status !== 'failed'))
+      setJobs(jobs as EnrichJob[])
     } catch {
       // silent — polling will retry
     }
