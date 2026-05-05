@@ -20,4 +20,5 @@ export const env = {
   get ZILLOW_ZIP_API_KEY() { return required('ZILLOW_ZIP_API_KEY') },
   get STAGE2_DB_URL() { return optional('STAGE2_DB_URL') },
   get APP_URL() { return optional('APP_URL') },
+  get NEXT_PUBLIC_APP_URL() { return process.env.NEXT_PUBLIC_APP_URL ?? 'https://enrich-production-1129.up.railway.app' },
 }
