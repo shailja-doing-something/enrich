@@ -52,23 +52,28 @@ export async function POST(request: NextRequest) {
         team_name: fi?.team_name || '',
         hs_object_id: row.hs_ticket_url || '',
       }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(30000),
     })
     if (!res.ok) {
+      const errorBody = await res.text()
+      console.error('[TeamSize] Webhook rejected:', res.status, errorBody)
       await updateRow(rowId, { branch1_status: 'failed' })
-      return Response.json({ found: false, reason: 'webhook_error' })
+      return Response.json({ found: false, reason: 'webhook_error', status: res.status, body: errorBody })
     }
     const json = await res.json() as Record<string, unknown>
     taskId = (json.task_id ?? json.taskId ?? null) as string | null
-  } catch {
+  } catch (e) {
+    console.error('[TeamSize] Webhook call failed:', String(e))
     await updateRow(rowId, { branch1_status: 'failed' })
-    return Response.json({ found: false, reason: 'webhook_timeout' })
+    return Response.json({ found: false, reason: 'webhook_exception', error: String(e) })
   }
 
   if (!taskId) {
     await updateRow(rowId, { branch1_status: 'not_found' })
     return Response.json({ found: false, reason: 'no_task_id' })
   }
+
+  console.log('[TeamSize] Got taskId:', taskId, 'for email:', fi?.email)
 
   let polls = 0
   let result: Record<string, unknown> | null = null
@@ -79,6 +84,7 @@ export async function POST(request: NextRequest) {
         signal: AbortSignal.timeout(10000),
       })
       const statusData = await statusRes.json() as Record<string, unknown>
+      console.log('[TeamSize] Poll', polls, 'for task:', taskId, 'status:', statusData.status, 'ready:', statusData.ready)
       if (statusData.ready === true && statusData.status === 'success') {
         result = statusData.result as Record<string, unknown>
         break

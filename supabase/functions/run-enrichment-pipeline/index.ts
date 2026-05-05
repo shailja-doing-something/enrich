@@ -103,7 +103,7 @@ async function lookupMadAgents(row: EnrichRow): Promise<ContactResult | null> {
   const phone = normalizePhone(fi?.phone ?? '')
 
   if (email) {
-    const { data, error } = await supabase.schema('mad').from('agents').select('*').eq('email', email).limit(1)
+    const { data, error } = await supabase.schema('mad').from('agents').select('*').ilike('email', email).limit(1)
     if (!error && data && data.length > 0) {
       return {
         rowId: row.id, found: true, source: 'mad_agents',
@@ -113,11 +113,26 @@ async function lookupMadAgents(row: EnrichRow): Promise<ContactResult | null> {
   }
 
   if (phone) {
-    const { data, error } = await supabase.schema('mad').from('agents').select('*').eq('phone', phone).limit(1)
-    if (!error && data && data.length > 0) {
-      return {
-        rowId: row.id, found: true, source: 'mad_agents',
-        data: { ...data[0], source: 'mad_agents', matched_on: 'phone', fetched_at: new Date().toISOString() },
+    const last10 = phone.slice(-10)
+    if (last10.length >= 10) {
+      const { data: allPhones, error: phoneErr } = await supabase
+        .schema('mad')
+        .from('agents')
+        .select('*')
+        .not('phone', 'is', null)
+        .limit(1000)
+
+      if (!phoneErr && allPhones) {
+        const match = allPhones.find((a: Record<string, unknown>) => {
+          const normalized = ((a.phone as string) ?? '').replace(/\D/g, '')
+          return normalized.slice(-10) === last10
+        })
+        if (match) {
+          return {
+            rowId: row.id, found: true, source: 'mad_agents',
+            data: { ...match, source: 'mad_agents', matched_on: 'phone', fetched_at: new Date().toISOString() },
+          }
+        }
       }
     }
   }
@@ -202,19 +217,13 @@ async function runPipeline(jobId: string) {
       branch2_found_count: branch2FoundCount,
     })
 
-    // If Branch 1 already finished, trigger merge; otherwise Branch 1 will trigger it
-    const { data: jobData } = await supabase
-      .from('enrich_jobs')
-      .select('branch1_status')
-      .eq('id', jobId)
-      .maybeSingle()
-
-    if (jobData?.branch1_status === 'complete' && APP_URL) {
-      fetch(`${APP_URL}/api/enrich/merge-results`, {
+    // Delegate completion check to avoid race condition with Branch 1
+    if (APP_URL) {
+      fetch(`${APP_URL}/api/enrich/check-completion`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobId }),
-      }).catch(err => console.error('merge-results trigger failed:', err))
+      }).catch(err => console.error('check-completion failed:', err))
     }
 
   } catch (e) {

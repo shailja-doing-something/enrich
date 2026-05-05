@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import { getJob, updateJob } from '@/lib/supabase/jobs'
+import { updateJob } from '@/lib/supabase/jobs'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { env } from '@/lib/env'
 import type { EnrichRow } from '@/lib/supabase/types'
@@ -58,15 +58,11 @@ export async function POST(request: NextRequest) {
     branch1_found_count: found,
   })
 
-  // If branch2 is also complete, trigger merge
-  const job = await getJob(jobId)
-  if (job?.branch2_status === 'complete') {
-    fetch(`${appUrl}/api/enrich/merge-results`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId }),
-    }).catch(err => console.error('merge-results trigger failed:', err))
-  }
+  fetch(`${appUrl}/api/enrich/check-completion`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobId }),
+  }).catch(console.error)
 
   return Response.json({ processed: rows.length, found })
 }

@@ -85,7 +85,7 @@ async function lookupMadAgents(row: EnrichRow): Promise<ContactResult | null> {
   const phone = normalizePhone(fi?.phone ?? '')
 
   if (email) {
-    const { data, error } = await supabaseAdmin.schema('mad').from('agents').select('*').eq('email', email).limit(1)
+    const { data, error } = await supabaseAdmin.schema('mad').from('agents').select('*').ilike('email', email).limit(1)
     if (!error && data && data.length > 0) {
       return {
         row,
@@ -102,18 +102,33 @@ async function lookupMadAgents(row: EnrichRow): Promise<ContactResult | null> {
   }
 
   if (phone) {
-    const { data, error } = await supabaseAdmin.schema('mad').from('agents').select('*').eq('phone', phone).limit(1)
-    if (!error && data && data.length > 0) {
-      return {
-        row,
-        found: true,
-        source: 'mad_agents',
-        data: {
-          ...(data[0] as Record<string, unknown>),
-          source: 'mad_agents',
-          matched_on: 'phone',
-          fetched_at: new Date().toISOString(),
-        },
+    const last10 = phone.slice(-10)
+    if (last10.length >= 10) {
+      const { data: allPhones, error: phoneErr } = await supabaseAdmin
+        .schema('mad')
+        .from('agents')
+        .select('*')
+        .not('phone', 'is', null)
+        .limit(1000)
+
+      if (!phoneErr && allPhones) {
+        const match = allPhones.find(a => {
+          const normalized = (a.phone ?? '').replace(/\D/g, '')
+          return normalized.slice(-10) === last10
+        })
+        if (match) {
+          return {
+            row,
+            found: true,
+            source: 'mad_agents',
+            data: {
+              ...(match as Record<string, unknown>),
+              source: 'mad_agents',
+              matched_on: 'phone',
+              fetched_at: new Date().toISOString(),
+            },
+          }
+        }
       }
     }
   }
