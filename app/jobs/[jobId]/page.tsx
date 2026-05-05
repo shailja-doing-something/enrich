@@ -68,7 +68,28 @@ export default function JobPage() {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ jobId }),
-            }).catch(console.error)
+            })
+            .then(async r => {
+              if (!r.ok) {
+                const err = await r.json().catch(() => ({}))
+                console.error('[AutoRun] Failed:', err)
+                autoRunFiredRef.current = false
+              } else {
+                console.log('[AutoRun] Fired successfully')
+                if (mountedRef.current) {
+                  setJob(prev => prev ? {
+                    ...prev,
+                    status: 'both_running',
+                    branch1_status: 'running',
+                    branch2_status: 'running',
+                  } : prev)
+                }
+              }
+            })
+            .catch(err => {
+              console.error('[AutoRun] Network error:', err)
+              autoRunFiredRef.current = false
+            })
           }
 
           if (!TERMINAL.includes(data.status)) {
@@ -219,6 +240,7 @@ export default function JobPage() {
   }
 
   const status = job.status
+  const isConfirmed = job.mapping_confirmed === true || confirmedLocally || confirmedLocallyRef.current
 
   // COMPLETE — STATE E
   if (status === 'complete') {
@@ -457,7 +479,7 @@ export default function JobPage() {
   }
 
   // AWAITING CONFIRMATION — STATE B (only if truly unconfirmed in DB and locally)
-  if (status === 'awaiting_confirmation' && !job.mapping_confirmed && !confirmedLocally) {
+  if (status === 'awaiting_confirmation' && !isConfirmed) {
     const mapping = localMapping ?? job.column_mapping
 
     if (!mapping) {
@@ -608,7 +630,7 @@ export default function JobPage() {
   }
 
   // AWAITING CONFIRMATION but mapping already confirmed in DB — stale status, show generating
-  if (status === 'awaiting_confirmation' && job.mapping_confirmed) {
+  if (status === 'awaiting_confirmation' && isConfirmed) {
     return (
       <div style={{ padding: '2rem' }}>
         <a href="/">← Back to dashboard</a>
