@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase/client'
 import { updateRow } from '@/lib/supabase/rows'
 import type { EnrichRow } from '@/lib/supabase/types'
 
-const WEBHOOK_URL = 'https://fello-ai.app.n8n.cloud/webhook/scrappy2'
+const ASYNC_URL = 'https://team-size-webhook-production.up.railway.app/api/v1/enrich/async'
 const STATUS_BASE = 'https://team-size-webhook-production.up.railway.app/api/v1/enrich/tasks'
 
 const bodySchema = z.object({
@@ -41,31 +41,29 @@ export async function POST(request: NextRequest) {
 
   let taskId: string | null = null
   try {
-    console.log('[TeamSize] Calling webhook for:', fi?.email)
-    const res = await fetch(WEBHOOK_URL, {
+    console.log('[TeamSize] Calling async endpoint for:', fi?.email)
+    const res = await fetch(`${ASYNC_URL}?priority=false`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: fi?.email ?? '',
-        phone: fi?.phone ?? '',
-        company: fi?.team_name || fi?.brokerage || '',
-        website: fi?.website || '',
-        firstname: firstName,
-        lastname: lastName,
-        team_name: fi?.team_name || '',
-        hs_object_id: row.hs_ticket_url || '',
+        list_name: `${firstName} ${lastName}`.trim(),
+        list_email: fi?.email ?? '',
+        list_phone: String(fi?.phone ?? ''),
+        list_team_name: fi?.team_name || fi?.brokerage || '',
+        list_website: fi?.website || '',
+        list_location: 'na',
       }),
       signal: AbortSignal.timeout(30000),
     })
-    console.log('[TeamSize] Webhook response:', res.status)
+    console.log('[TeamSize] Async response status:', res.status)
     const rawBody = await res.text()
-    console.log('[TeamSize] Webhook raw response body:', rawBody)
+    console.log('[TeamSize] Async response:', rawBody)
 
     if (!res.ok) {
-      console.error('[TeamSize] Webhook error body:', rawBody)
-      console.error('[TeamSize] Webhook rejected:', res.status, rawBody)
+      console.error('[TeamSize] Async endpoint error body:', rawBody)
+      console.error('[TeamSize] Async endpoint rejected:', res.status, rawBody)
       await updateRow(rowId, { branch1_status: 'failed' })
-      return Response.json({ found: false, reason: 'webhook_error', status: res.status, body: rawBody })
+      return Response.json({ found: false, reason: 'async_error', status: res.status, body: rawBody })
     }
 
     let json: Record<string, unknown> = {}
@@ -79,11 +77,11 @@ export async function POST(request: NextRequest) {
 
     console.log('[TeamSize] Parsed response keys:', Object.keys(json))
     taskId = (json.task_id ?? json.taskId ?? json.id ?? json.taskID ?? null) as string | null
-    console.log('[TeamSize] Extracted taskId:', taskId)
+    console.log('[TeamSize] taskId:', taskId)
   } catch (e) {
-    console.error('[TeamSize] Webhook call failed:', String(e))
+    console.error('[TeamSize] Async call failed:', String(e))
     await updateRow(rowId, { branch1_status: 'failed' })
-    return Response.json({ found: false, reason: 'webhook_exception', error: String(e) })
+    return Response.json({ found: false, reason: 'async_exception', error: String(e) })
   }
 
   if (!taskId) {
@@ -91,7 +89,6 @@ export async function POST(request: NextRequest) {
     return Response.json({ found: false, reason: 'no_task_id' })
   }
 
-  console.log('[TeamSize] taskId:', taskId)
   console.log('[TeamSize] Got taskId:', taskId, 'for email:', fi?.email)
 
   let polls = 0
