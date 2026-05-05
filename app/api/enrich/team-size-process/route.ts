@@ -33,12 +33,15 @@ export async function POST(request: NextRequest) {
   const row = rowData as EnrichRow
   const fi = row.formatted_input
 
+  console.log('[TeamSize] Processing row:', rowId, 'email:', fi?.email ?? 'none')
+
   const nameParts = (fi?.name ?? '').trim().split(/\s+/)
   const firstName = nameParts[0] ?? ''
   const lastName = nameParts.slice(1).join(' ')
 
   let taskId: string | null = null
   try {
+    console.log('[TeamSize] Calling webhook for:', fi?.email)
     const res = await fetch(WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -54,8 +57,10 @@ export async function POST(request: NextRequest) {
       }),
       signal: AbortSignal.timeout(30000),
     })
+    console.log('[TeamSize] Webhook response:', res.status)
     if (!res.ok) {
       const errorBody = await res.text()
+      console.error('[TeamSize] Webhook error body:', errorBody)
       console.error('[TeamSize] Webhook rejected:', res.status, errorBody)
       await updateRow(rowId, { branch1_status: 'failed' })
       return Response.json({ found: false, reason: 'webhook_error', status: res.status, body: errorBody })
@@ -73,6 +78,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ found: false, reason: 'no_task_id' })
   }
 
+  console.log('[TeamSize] taskId:', taskId)
   console.log('[TeamSize] Got taskId:', taskId, 'for email:', fi?.email)
 
   let polls = 0
@@ -84,6 +90,9 @@ export async function POST(request: NextRequest) {
         signal: AbortSignal.timeout(10000),
       })
       const statusData = await statusRes.json() as Record<string, unknown>
+      if (polls % 5 === 0) {
+        console.log('[TeamSize] Still polling task:', taskId, 'poll:', polls)
+      }
       console.log('[TeamSize] Poll', polls, 'for task:', taskId, 'status:', statusData.status, 'ready:', statusData.ready)
       if (statusData.ready === true && statusData.status === 'success') {
         result = statusData.result as Record<string, unknown>
@@ -96,6 +105,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (result) {
+    console.log('[TeamSize] FOUND result for:', fi?.email, 'team_size_count:', result.team_size_count)
     await updateRow(rowId, {
       team_size_data: {
         source: 'team_size_webhook',
@@ -118,6 +128,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ found: true })
   }
 
+  console.log('[TeamSize] TIMEOUT for:', fi?.email, 'task:', taskId)
   await updateRow(rowId, { branch1_status: 'not_found' })
   return Response.json({ found: false, reason: 'timeout' })
 }

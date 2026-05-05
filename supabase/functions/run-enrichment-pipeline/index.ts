@@ -4,7 +4,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const ZILLOW_API_KEY = Deno.env.get('ZILLOW_ZIP_API_KEY') ?? ''
-const APP_URL = Deno.env.get('APP_URL') ?? ''
+const APP_URL = Deno.env.get('APP_URL') ?? 'https://enrich-production-1129.up.railway.app'
 
 const ZILLOW_ZIP_BASE = 'https://zillow-zip.up.railway.app'
 
@@ -168,6 +168,8 @@ async function runBranch2(rows: EnrichRow[]): Promise<ContactResult[]> {
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
 async function runPipeline(jobId: string) {
+  console.log('[Pipeline] Starting for job:', jobId)
+  console.log('[Pipeline] APP_URL:', APP_URL)
   try {
     const { data: allRowsData, error: rowsErr } = await supabase
       .from('enrich_rows')
@@ -191,13 +193,13 @@ async function runPipeline(jobId: string) {
     })
 
     // Fire Branch 1 (team size) as non-blocking — runs on Railway, no Edge Function timeout
-    if (APP_URL) {
-      fetch(`${APP_URL}/api/enrich/team-size-run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId }),
-      }).catch(err => console.error('Branch 1 fire failed:', err))
-    }
+    console.log('[Pipeline] Firing Branch 1 at:', `${APP_URL}/api/enrich/team-size-run`)
+    fetch(`${APP_URL}/api/enrich/team-size-run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId }),
+    }).then(r => console.log('[Pipeline] Branch 1 fired, status:', r.status))
+      .catch(err => console.error('[Pipeline] Branch 1 fire FAILED:', String(err)))
 
     // Branch 2: Zillow ZIP + mad.agents — runs here in Edge Function
     const branch2Results = await runBranch2(allRows)
@@ -216,6 +218,16 @@ async function runPipeline(jobId: string) {
       branch2_completed_at: new Date().toISOString(),
       branch2_found_count: branch2FoundCount,
     })
+
+    console.log('[Pipeline] Branch 2 complete, found:', branch2FoundCount)
+
+    const { data: jobData } = await supabase
+      .from('enrich_jobs')
+      .select('branch1_status')
+      .eq('id', jobId)
+      .maybeSingle()
+
+    console.log('[Pipeline] Branch 1 status:', jobData?.branch1_status)
 
     // Delegate completion check to avoid race condition with Branch 1
     if (APP_URL) {

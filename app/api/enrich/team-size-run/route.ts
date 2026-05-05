@@ -18,6 +18,9 @@ export async function POST(request: NextRequest) {
   const { jobId } = parsed.data
   const appUrl = env.NEXT_PUBLIC_APP_URL
 
+  console.log('[TeamSizeRun] Called for job:', jobId)
+  console.log('[TeamSizeRun] APP_URL:', process.env.NEXT_PUBLIC_APP_URL)
+
   const { data: rowsData, error: rowsErr } = await supabaseAdmin
     .from('enrich_rows')
     .select('*')
@@ -30,6 +33,8 @@ export async function POST(request: NextRequest) {
   }
 
   const rows = (rowsData ?? []) as EnrichRow[]
+
+  console.log('[TeamSizeRun] Rows to process:', rows.length)
 
   if (rows.length === 0) {
     return Response.json({ message: 'No rows to process' })
