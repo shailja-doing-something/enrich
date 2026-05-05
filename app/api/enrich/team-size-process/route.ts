@@ -58,15 +58,28 @@ export async function POST(request: NextRequest) {
       signal: AbortSignal.timeout(30000),
     })
     console.log('[TeamSize] Webhook response:', res.status)
+    const rawBody = await res.text()
+    console.log('[TeamSize] Webhook raw response body:', rawBody)
+
     if (!res.ok) {
-      const errorBody = await res.text()
-      console.error('[TeamSize] Webhook error body:', errorBody)
-      console.error('[TeamSize] Webhook rejected:', res.status, errorBody)
+      console.error('[TeamSize] Webhook error body:', rawBody)
+      console.error('[TeamSize] Webhook rejected:', res.status, rawBody)
       await updateRow(rowId, { branch1_status: 'failed' })
-      return Response.json({ found: false, reason: 'webhook_error', status: res.status, body: errorBody })
+      return Response.json({ found: false, reason: 'webhook_error', status: res.status, body: rawBody })
     }
-    const json = await res.json() as Record<string, unknown>
-    taskId = (json.task_id ?? json.taskId ?? null) as string | null
+
+    let json: Record<string, unknown> = {}
+    try {
+      json = JSON.parse(rawBody) as Record<string, unknown>
+    } catch {
+      console.error('[TeamSize] Response is not JSON')
+      await updateRow(rowId, { branch1_status: 'failed' })
+      return Response.json({ found: false, reason: 'invalid_json' })
+    }
+
+    console.log('[TeamSize] Parsed response keys:', Object.keys(json))
+    taskId = (json.task_id ?? json.taskId ?? json.id ?? json.taskID ?? null) as string | null
+    console.log('[TeamSize] Extracted taskId:', taskId)
   } catch (e) {
     console.error('[TeamSize] Webhook call failed:', String(e))
     await updateRow(rowId, { branch1_status: 'failed' })
