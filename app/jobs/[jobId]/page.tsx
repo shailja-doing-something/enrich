@@ -45,6 +45,11 @@ export default function JobPage() {
           setNetworkError(false)
           setJob(data)
 
+          if (data.mapping_confirmed === true) {
+            confirmedLocallyRef.current = true
+            setConfirmedLocally(true)
+          }
+
           // Prevent auto-run firing on jobs already running or complete
           if (['stage1_running', 'stage2_running', 'both_running', 'branch1_running', 'branch2_running', 'merging', 'complete'].includes(data.status)) {
             autoRunFiredRef.current = true
@@ -121,6 +126,14 @@ export default function JobPage() {
         if (mountedRef.current) setPreviewLoading(false)
       })
   }, [localMapping, job?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Lock out STATE B on first load if job is already confirmed in DB
+  useEffect(() => {
+    if (job?.mapping_confirmed) {
+      setConfirmedLocally(true)
+      confirmedLocallyRef.current = true
+    }
+  }, [job?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveAndRun = async () => {
     if (saving) return
@@ -315,7 +328,7 @@ export default function JobPage() {
   }
 
   // PIPELINE RUNNING — STATE D
-  if (['stage1_running', 'stage2_running', 'both_running', 'branch1_running', 'branch2_running', 'merging'].includes(status) || runningLocally) {
+  if (['both_running', 'merging', 'stage1_running', 'stage2_running', 'stage3_running', 'branch1_running', 'branch2_running'].includes(status)) {
     const b1 = job.branch1_status ?? 'running'
     const b2 = job.branch2_status ?? 'running'
     const b1Done = b1 === 'complete'
@@ -443,8 +456,8 @@ export default function JobPage() {
     )
   }
 
-  // AWAITING CONFIRMATION — STATE B
-  if (status === 'awaiting_confirmation' && !confirmedLocally) {
+  // AWAITING CONFIRMATION — STATE B (only if truly unconfirmed in DB and locally)
+  if (status === 'awaiting_confirmation' && !job.mapping_confirmed && !confirmedLocally) {
     const mapping = localMapping ?? job.column_mapping
 
     if (!mapping) {
@@ -590,6 +603,19 @@ export default function JobPage() {
         >
           {saving ? 'Saving...' : 'Save and run enrichment'}
         </button>
+      </div>
+    )
+  }
+
+  // AWAITING CONFIRMATION but mapping already confirmed in DB — stale status, show generating
+  if (status === 'awaiting_confirmation' && job.mapping_confirmed) {
+    return (
+      <div style={{ padding: '2rem' }}>
+        <a href="/">← Back to dashboard</a>
+        <div style={{ marginTop: '4rem', textAlign: 'center' }}>
+          <p>Generating formatted sheet...</p>
+          <p style={{ fontSize: '13px', color: '#888', marginTop: '0.5rem' }}>This usually takes 10–30 seconds</p>
+        </div>
       </div>
     )
   }
