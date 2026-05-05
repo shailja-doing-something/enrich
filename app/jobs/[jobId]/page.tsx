@@ -369,7 +369,7 @@ export default function JobPage() {
               </span>
             </div>
             <p style={{ marginTop: '0.5rem', fontSize: '13px', color: '#6b7280' }}>
-              {b1Done ? `${job.branch1_found_count ?? 0} rows found` : 'Submitting to n8n · polling for results…'}
+              {b1Done ? `${job.branch1_found_count ?? 0} ${job.branch1_found_count === 1 ? 'row' : 'rows'} found` : 'Submitting to n8n · polling for results…'}
             </p>
           </div>
           <div style={{ padding: '1.25rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
@@ -380,7 +380,7 @@ export default function JobPage() {
               </span>
             </div>
             <p style={{ marginTop: '0.5rem', fontSize: '13px', color: '#6b7280' }}>
-              {b2Done ? `${job.branch2_found_count ?? 0} rows found` : 'Zillow ZIP → mad.agents…'}
+              {b2Done ? `${job.branch2_found_count ?? 0} ${job.branch2_found_count === 1 ? 'row' : 'rows'} found` : 'Zillow ZIP → mad.agents…'}
             </p>
           </div>
         </div>
