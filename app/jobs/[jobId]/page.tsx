@@ -186,24 +186,6 @@ export default function JobPage() {
 
   // ── RENDER ────────────────────────────────────────────────────────────────────
 
-  const status = job?.status ?? ''
-
-  // FAILED — checked first so it renders even before the null guard below
-  if (status === 'failed') {
-    return (
-      <div style={{ padding: '2rem' }}>
-        <a href="/">← Back to dashboard</a>
-        <h2 style={{ color: 'red', marginTop: '1rem' }}>Job failed</h2>
-        {job?.error_log && (
-          <pre style={{ marginTop: '1rem', background: '#fee2e2', padding: '1rem', borderRadius: '8px', whiteSpace: 'pre-wrap' }}>
-            {job.error_log}
-          </pre>
-        )}
-        <a href="/" style={{ display: 'inline-block', marginTop: '1rem' }}>Start over</a>
-      </div>
-    )
-  }
-
   // Loading — job not yet fetched (TypeScript: job is non-null for everything below)
   if (!job) {
     return (
@@ -222,6 +204,8 @@ export default function JobPage() {
       </div>
     )
   }
+
+  const status = job.status
 
   // COMPLETE — STATE E
   if (status === 'complete') {
@@ -310,6 +294,22 @@ export default function JobPage() {
             {showAllRows ? 'Show fewer rows' : `View all ${allRows.length} rows`}
           </button>
         )}
+      </div>
+    )
+  }
+
+  // FAILED
+  if (status === 'failed') {
+    return (
+      <div style={{ padding: '2rem' }}>
+        <a href="/">← Back to dashboard</a>
+        <h2 style={{ color: 'red', marginTop: '1rem' }}>Job failed</h2>
+        {job.error_log && (
+          <pre style={{ marginTop: '1rem', background: '#fee2e2', padding: '1rem', borderRadius: '8px', whiteSpace: 'pre-wrap' }}>
+            {job.error_log}
+          </pre>
+        )}
+        <a href="/" style={{ display: 'inline-block', marginTop: '1rem' }}>Start over</a>
       </div>
     )
   }
