@@ -517,17 +517,8 @@ export default function JobPage() {
     }
 
     const fieldLabels: Record<string, string> = {
-      name: 'Full Name',
-      first_name: 'First Name (if no Full Name)',
-      last_name: 'Last Name (if no Full Name)',
-      email: 'Email',
-      phone: 'Phone',
-      team_name: 'Team Name',
-      brokerage: 'Brokerage',
-      website: 'Website',
-      location: 'Location',
-      city: 'City (if no Location)',
-      state: 'State (if no Location)',
+      name: 'Full Name', email: 'Email', phone: 'Phone',
+      team_name: 'Team Name', brokerage: 'Brokerage', website: 'Website', location: 'Location',
     }
 
     const sourceHeaders = job.source_headers ?? []
@@ -568,7 +559,9 @@ export default function JobPage() {
                 <tr key={field} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={{ padding: '0.75rem 1rem', fontWeight: 500 }}>{fieldLabels[field] ?? field}</td>
                   <td style={{ padding: '0.75rem 1rem', color: val.source_column ? '#111' : '#9ca3af', fontStyle: val.source_column ? 'normal' : 'italic' }}>
-                    {val.source_column ?? '— not found —'}
+                    {val.source_column
+                      ? (val.source_column.includes('|') ? val.source_column.replace(/\|/g, ' + ') : val.source_column)
+                      : '— not found —'}
                   </td>
                   <td style={{ padding: '0.75rem 1rem' }}>
                     <span style={{

@@ -7,18 +7,35 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 function cleanPhone(raw: string): string {
-  const digits = raw.replace(/[^\d]/g, '')
+  if (!raw) return ''
+  const digits = String(raw).replace(/\D/g, '')
   if (digits.length > 10) return digits.slice(-10)
   if (digits.length < 7) return ''
   return digits
 }
 
 function cleanEmail(raw: string): string {
-  return raw.trim().toLowerCase()
+  return (raw ?? '').trim().toLowerCase()
 }
 
 function cleanName(raw: string): string {
-  return raw.trim().replace(/\s+/g, ' ').replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '')
+  return (raw ?? '').trim().replace(/\s+/g, ' ')
+}
+
+function resolveField(
+  rawRow: Record<string, string>,
+  sourceColumn: string | null,
+  separator: string = ' '
+): string {
+  if (!sourceColumn) return ''
+  if (sourceColumn.includes('|')) {
+    const parts = sourceColumn.split('|')
+    return parts
+      .map((col: string) => (rawRow[col.trim()] ?? '').trim())
+      .filter(Boolean)
+      .join(separator)
+  }
+  return (rawRow[sourceColumn] ?? '').trim()
 }
 
 function mapRowToGeneric(
@@ -26,30 +43,17 @@ function mapRowToGeneric(
   mapping: Record<string, { source_column: string | null }>,
   hsTicketUrl: string
 ) {
-  const get = (field: string): string => {
-    const sourceCol = mapping[field]?.source_column
-    if (!sourceCol) return ''
-    return rawRow[sourceCol] ?? ''
-  }
-
-  const fullName = get('name').trim()
-  const firstName = get('first_name').trim()
-  const lastName = get('last_name').trim()
-  const name = fullName || [firstName, lastName].filter(Boolean).join(' ') || ''
-
-  const fullLocation = get('location').trim()
-  const city = get('city').trim()
-  const state = get('state').trim()
-  const location = fullLocation || [city, state].filter(Boolean).join(', ') || ''
+  const name = resolveField(rawRow, mapping['name']?.source_column ?? null, ' ')
+  const location = resolveField(rawRow, mapping['location']?.source_column ?? null, ', ')
 
   return {
     name:          cleanName(name),
-    email:         cleanEmail(get('email')),
-    phone:         cleanPhone(get('phone')),
-    team_name:     get('team_name').trim(),
-    brokerage:     get('brokerage').trim(),
-    website:       get('website').trim(),
-    location:      location.trim(),
+    email:         cleanEmail(resolveField(rawRow, mapping['email']?.source_column ?? null)),
+    phone:         cleanPhone(resolveField(rawRow, mapping['phone']?.source_column ?? null)),
+    team_name:     resolveField(rawRow, mapping['team_name']?.source_column ?? null).trim(),
+    brokerage:     resolveField(rawRow, mapping['brokerage']?.source_column ?? null).trim(),
+    website:       resolveField(rawRow, mapping['website']?.source_column ?? null).trim(),
+    location:      cleanName(location),
     hs_ticket_url: hsTicketUrl,
   }
 }

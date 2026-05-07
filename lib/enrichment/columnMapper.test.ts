@@ -3,17 +3,13 @@ import { mapRowToGeneric } from './columnMapper'
 import type { ColumnMapping } from '../supabase/types'
 
 const testMapping: ColumnMapping = {
-  name:       { source_column: 'attendee_name',  confidence: 'high' },
-  first_name: { source_column: null,             confidence: 'none' },
-  last_name:  { source_column: null,             confidence: 'none' },
-  email:      { source_column: 'attendee_email', confidence: 'high' },
-  phone:      { source_column: 'phone_number',   confidence: 'high' },
-  team_name:  { source_column: 'team',           confidence: 'high' },
-  brokerage:  { source_column: 'brokerage',      confidence: 'high' },
-  website:    { source_column: 'website',        confidence: 'high' },
-  location:   { source_column: 'city_state',     confidence: 'high' },
-  city:       { source_column: null,             confidence: 'none' },
-  state:      { source_column: null,             confidence: 'none' },
+  name:      { source_column: 'attendee_name',  confidence: 'high' },
+  email:     { source_column: 'attendee_email', confidence: 'high' },
+  phone:     { source_column: 'phone_number',   confidence: 'high' },
+  team_name: { source_column: 'team',           confidence: 'high' },
+  brokerage: { source_column: 'brokerage',      confidence: 'high' },
+  website:   { source_column: 'website',        confidence: 'high' },
+  location:  { source_column: 'city_state',     confidence: 'high' },
 }
 
 const testRow = {
@@ -84,17 +80,13 @@ describe('mapRowToGeneric', () => {
 
   it('multiple null source_columns all produce empty strings', () => {
     const allNullMapping: ColumnMapping = {
-      name:       { source_column: null, confidence: 'none' },
-      first_name: { source_column: null, confidence: 'none' },
-      last_name:  { source_column: null, confidence: 'none' },
-      email:      { source_column: null, confidence: 'none' },
-      phone:      { source_column: null, confidence: 'none' },
-      team_name:  { source_column: null, confidence: 'none' },
-      brokerage:  { source_column: null, confidence: 'none' },
-      website:    { source_column: null, confidence: 'none' },
-      location:   { source_column: null, confidence: 'none' },
-      city:       { source_column: null, confidence: 'none' },
-      state:      { source_column: null, confidence: 'none' },
+      name:      { source_column: null, confidence: 'none' },
+      email:     { source_column: null, confidence: 'none' },
+      phone:     { source_column: null, confidence: 'none' },
+      team_name: { source_column: null, confidence: 'none' },
+      brokerage: { source_column: null, confidence: 'none' },
+      website:   { source_column: null, confidence: 'none' },
+      location:  { source_column: null, confidence: 'none' },
     }
     const row = mapRowToGeneric(testRow, allNullMapping, HS_TICKET)
     expect(row.name).toBe('')

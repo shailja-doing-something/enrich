@@ -47,7 +47,6 @@ export async function POST(request: NextRequest) {
       team_members: teamData?.team_members ?? null,
       agent_designation: teamData?.agent_designation ?? null,
       detected_crms: teamData?.detected_crms ?? null,
-      team_size_agent_id: teamData?.agent_id ?? null,
 
       // ── Contact Enrichment (Branch 2) ─────────────
       contact_source: contactData?.source ?? null,
@@ -94,7 +93,7 @@ export async function POST(request: NextRequest) {
       zillow_service_areas: contactData?.service_areas ?? null,
 
       // mad.agents fields
-      mad_id: contactData?.mad_id ?? contactData?.id ?? null,
+      mad_id: contactData?.id ?? null,
       mad_first_name: contactData?.first_name ?? null,
       mad_last_name: contactData?.last_name ?? null,
       mad_job_title: contactData?.job_title ?? null,

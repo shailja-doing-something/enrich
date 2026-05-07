@@ -15,17 +15,13 @@ export type ColumnMappingField = {
 }
 
 export type ColumnMapping = {
-  name: ColumnMappingField        // full name if exists
-  first_name: ColumnMappingField  // fallback if no full name
-  last_name: ColumnMappingField   // fallback if no full name
+  name: ColumnMappingField
   email: ColumnMappingField
   phone: ColumnMappingField
   team_name: ColumnMappingField
   brokerage: ColumnMappingField
   website: ColumnMappingField
-  location: ColumnMappingField    // full location if exists
-  city: ColumnMappingField        // fallback if no location
-  state: ColumnMappingField       // fallback if no location
+  location: ColumnMappingField
 }
 
 export type EnrichJob = {
