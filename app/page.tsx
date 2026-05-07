@@ -70,8 +70,9 @@ export default function DashboardPage() {
       })
       if (!res.ok) return
       const json = await res.json()
-      const jobs = json.data ?? json ?? []
-      setJobs(jobs as EnrichJob[])
+      const jobs = (json.data ?? json ?? []) as EnrichJob[]
+      jobs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      setJobs(jobs)
     } catch {
       // silent — polling will retry
     }
