@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { getJob, updateJob } from '@/lib/supabase/jobs'
-import { env } from '@/lib/env'
 
 const bodySchema = z.object({
   jobId: z.string().uuid(),
 })
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://enrich-production-1129.up.railway.app'
 
 export async function POST(request: NextRequest) {
   const parsed = bodySchema.safeParse(await request.json())
@@ -24,18 +25,14 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: true }) // already running or done — silently ignore
   }
 
-  await updateJob(jobId, { status: 'stage1_running' })
+  await updateJob(jobId, { status: 'both_running' })
 
-  // Fire run-enrichment-pipeline Edge Function fire-and-forget
-  const edgeUrl = `${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/run-enrichment-pipeline`
-  fetch(edgeUrl, {
+  // Fire Railway pipeline route — no timeout issues
+  fetch(`${APP_URL}/api/enrich/pipeline`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jobId }),
-  }).catch(err => console.error('run-enrichment-pipeline trigger failed:', err))
+  }).catch(err => console.error('[AutoRun] Pipeline fire failed:', err))
 
   return Response.json({ ok: true })
 }

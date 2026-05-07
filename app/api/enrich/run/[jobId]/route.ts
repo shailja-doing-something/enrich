@@ -1,9 +1,10 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { getJob, updateJob } from '@/lib/supabase/jobs'
-import { env } from '@/lib/env'
 
 const paramsSchema = z.object({ jobId: z.string().uuid() })
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://enrich-production-1129.up.railway.app'
 
 export async function POST(
   _request: NextRequest,
@@ -27,19 +28,13 @@ export async function POST(
     )
   }
 
-  fetch(
-    `${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/run-enrichment-pipeline`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-      body: JSON.stringify({ jobId }),
-    }
-  ).catch(err => console.error('Pipeline trigger failed:', err))
+  await updateJob(jobId, { status: 'both_running' })
 
-  await updateJob(jobId, { status: 'stage1_running' })
+  fetch(`${APP_URL}/api/enrich/pipeline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobId }),
+  }).catch(err => console.error('[Run] Pipeline trigger failed:', err))
 
-  return Response.json({ data: { jobId, status: 'stage1_running' } })
+  return Response.json({ data: { jobId, status: 'both_running' } })
 }
