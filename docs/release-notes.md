@@ -1,5 +1,28 @@
 # Release Notes
 
+## [0.4.0] — 2026-05-07 — Parallel team-size pipeline, pipe-syntax field mapping, merged_data expansion
+
+### Added
+- `lib/enrichment/cleaners.ts` — `cleanPhone`, `cleanEmail`, `cleanName` extracted as shared utilities
+- `app/api/enrich/check-completion/route.ts` — atomic completion check; prevents race condition when both branches finish simultaneously; fires merge-results exactly once
+- `app/api/enrich/merge-results/route.ts` — expanded merged output (~70 fields): identity from `formatted_input`, team size from `team_size_data`, full Zillow ZIP fields + mad.agents fields from `contact_data`
+
+### Changed
+- `app/api/enrich/team-size-run/route.ts` — rewritten as parallel async: Phase 1 submits all rows simultaneously via `Promise.all`, Phase 2 polls all task IDs in parallel; max ~3.5 min regardless of row count (was serial: ~2 min/row); re-entry guard prevents duplicate runs
+- `lib/enrichment/columnMapper.ts` — `resolveField()` added: handles pipe-separated `source_column` values (e.g. `"FirstName|LastName"`) for field concatenation; `mapRowToGeneric` uses cleaners
+- `lib/enrichment/columnDetector.ts` — Gemini prompt updated to instruct pipe-syntax for `name` and `location` when only separate first/last or city/state columns exist
+- `supabase/functions/generate-enrich-rows/index.ts` — inline `resolveField` + cleaners added; `mapRowToGeneric` matches lib implementation
+- `app/jobs/[jobId]/page.tsx` — render order fixes: `both_running` always shows STATE D; `ready+confirmedLocally` spinner now correctly precedes STATE C Run button; STATE B mapping table shows pipe columns as `col1 + col2`
+- `app/api/enrich/team-size-process/route.ts` — deleted; replaced by parallel logic in `team-size-run`
+
+### Fixed
+- `both_running` status rendered "Generating..." spinner instead of STATE D pipeline progress
+- `ready+confirmedLocally` showed Run button instead of "Preparing enrichment..." spinner
+- Team-size rows stuck processing for 60+ min due to serial submission and duplicate re-entry
+- STATE E (results) not rendering after job completed due to polling stopping before final render
+
+---
+
 ## [0.3.0] — 2026-05-04 — Stage 1 real Zillow ZIP API + auto-waterfall pipeline
 
 ### Added
