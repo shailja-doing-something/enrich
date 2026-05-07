@@ -3,13 +3,17 @@ import { env } from '../env'
 import type { ColumnMapping, ColumnMappingField } from '../supabase/types'
 
 const TARGET_FIELDS: Record<keyof ColumnMapping, string> = {
-  name: "person's full name",
+  name: "person's full name — if separate first and last name columns exist, they will be concatenated. Look for: name, full_name, first_name+last_name, firstname+lastname, attendee_name, contact_name",
+  first_name: 'first name column if full name not available',
+  last_name: 'last name column if full name not available',
   email: 'email address',
   phone: 'phone or mobile number',
   team_name: 'real estate team or group name',
   brokerage: 'brokerage or franchise office name',
   website: 'personal or team website URL',
   location: 'city, state, or location',
+  city: 'city column if combined location not available',
+  state: 'state/province column if combined location not available',
 }
 
 const EMPTY_FIELD: ColumnMappingField = { source_column: null, confidence: 'none' }
@@ -33,17 +37,23 @@ Rules:
 - Map each target field to the single most likely source column
 - If no source column matches, set source_column to null and confidence to "none"
 - confidence: "high" = obvious match, "medium" = plausible, "low" = weak guess
+- For name: if a full name column exists, map it to "name" and leave first_name/last_name null. If only separate columns exist, map them to first_name and last_name and leave name null.
+- For location: if a combined location column exists, map it to "location" and leave city/state null. If only separate columns exist, map them to city and state and leave location null.
 - Return JSON only — no markdown, no code fences, no explanation
 
 Return format (exactly matching this structure):
 {
   "name": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
+  "first_name": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
+  "last_name": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
   "email": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
   "phone": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
   "team_name": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
   "brokerage": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
   "website": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
-  "location": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" }
+  "location": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
+  "city": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" },
+  "state": { "source_column": "Column Name or null", "confidence": "high|medium|low|none" }
 }`
 
   let raw: string

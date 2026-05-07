@@ -517,8 +517,17 @@ export default function JobPage() {
     }
 
     const fieldLabels: Record<string, string> = {
-      name: 'Full Name', email: 'Email', phone: 'Phone',
-      team_name: 'Team Name', brokerage: 'Brokerage', website: 'Website', location: 'Location',
+      name: 'Full Name',
+      first_name: 'First Name (if no Full Name)',
+      last_name: 'Last Name (if no Full Name)',
+      email: 'Email',
+      phone: 'Phone',
+      team_name: 'Team Name',
+      brokerage: 'Brokerage',
+      website: 'Website',
+      location: 'Location',
+      city: 'City (if no Location)',
+      state: 'State (if no Location)',
     }
 
     const sourceHeaders = job.source_headers ?? []

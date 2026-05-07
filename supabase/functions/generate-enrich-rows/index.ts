@@ -6,6 +6,21 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
+function cleanPhone(raw: string): string {
+  const digits = raw.replace(/[^\d]/g, '')
+  if (digits.length > 10) return digits.slice(-10)
+  if (digits.length < 7) return ''
+  return digits
+}
+
+function cleanEmail(raw: string): string {
+  return raw.trim().toLowerCase()
+}
+
+function cleanName(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ').replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '')
+}
+
 function mapRowToGeneric(
   rawRow: Record<string, string>,
   mapping: Record<string, { source_column: string | null }>,
@@ -17,14 +32,24 @@ function mapRowToGeneric(
     return rawRow[sourceCol] ?? ''
   }
 
+  const fullName = get('name').trim()
+  const firstName = get('first_name').trim()
+  const lastName = get('last_name').trim()
+  const name = fullName || [firstName, lastName].filter(Boolean).join(' ') || ''
+
+  const fullLocation = get('location').trim()
+  const city = get('city').trim()
+  const state = get('state').trim()
+  const location = fullLocation || [city, state].filter(Boolean).join(', ') || ''
+
   return {
-    name:          get('name'),
-    email:         get('email'),
-    phone:         get('phone'),
-    team_name:     get('team_name'),
-    brokerage:     get('brokerage'),
-    website:       get('website'),
-    location:      get('location'),
+    name:          cleanName(name),
+    email:         cleanEmail(get('email')),
+    phone:         cleanPhone(get('phone')),
+    team_name:     get('team_name').trim(),
+    brokerage:     get('brokerage').trim(),
+    website:       get('website').trim(),
+    location:      location.trim(),
     hs_ticket_url: hsTicketUrl,
   }
 }
