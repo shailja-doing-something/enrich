@@ -1,5 +1,12 @@
 # Release Notes
 
+## [0.4.2] — 2026-05-15 — List type badge on confirmation page
+
+### Added
+- `app/jobs/[jobId]/page.tsx` — list type badge in STATE B (confirmation/preview): colored pill above the mapping table showing the detected list type (A–E) with a human-readable label; derived live from `localMapping` so it updates when the user changes a dropdown; renders nothing if mapping is unavailable
+
+---
+
 ## [0.4.1] — 2026-05-15 — Input schema detection: list type classification + column mapping report
 
 ### Added

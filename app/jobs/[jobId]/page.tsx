@@ -4,6 +4,25 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField, GenericFormattedRow } from '@/lib/supabase/types'
 
+const LIST_TYPE_META: Record<string, { label: string; bg: string; color: string }> = {
+  A: { label: 'Type A — Name + Email',    bg: '#dbeafe', color: '#1e40af' },
+  B: { label: 'Type B — Name only',       bg: '#ede9fe', color: '#5b21b6' },
+  C: { label: 'Type C — Email only',      bg: '#e0e7ff', color: '#3730a3' },
+  D: { label: 'Type D — Team name only',  bg: '#fef3c7', color: '#92400e' },
+  E: { label: 'Type E — Mixed / partial', bg: '#f3f4f6', color: '#374151' },
+}
+
+function deriveListType(mapping: ColumnMapping): string {
+  const hasName = mapping.name.source_column !== null
+  const hasEmail = mapping.email.source_column !== null
+  const hasTeamName = mapping.team_name.source_column !== null
+  if (hasName && hasEmail) return 'A'
+  if (hasName && !hasEmail) return 'B'
+  if (hasEmail && !hasName) return 'C'
+  if (hasTeamName && !hasName && !hasEmail) return 'D'
+  return 'E'
+}
+
 export default function JobPage() {
   const params = useParams()
   const jobId = params?.jobId as string
@@ -516,6 +535,9 @@ export default function JobPage() {
       )
     }
 
+    const listType = deriveListType(mapping)
+    const listTypeMeta = LIST_TYPE_META[listType]
+
     const fieldLabels: Record<string, string> = {
       name: 'Full Name', email: 'Email', phone: 'Phone',
       team_name: 'Team Name', brokerage: 'Brokerage', website: 'Website', location: 'Location',
@@ -543,6 +565,20 @@ export default function JobPage() {
         <p style={{ color: '#6b7280', marginTop: '0.5rem' }}>
           Gemini detected the following mapping. You can adjust any field using the dropdown.
         </p>
+
+        <div style={{ marginTop: '0.75rem' }}>
+          <span style={{
+            display: 'inline-block',
+            padding: '4px 12px',
+            borderRadius: '9999px',
+            fontSize: '13px',
+            fontWeight: 500,
+            background: listTypeMeta.bg,
+            color: listTypeMeta.color,
+          }}>
+            {listTypeMeta.label}
+          </span>
+        </div>
 
         <div style={{ overflowX: 'auto', marginTop: '1.5rem' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #e5e7eb' }}>
