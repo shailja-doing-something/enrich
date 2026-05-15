@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField, GenericFormattedRow } from '@/lib/supabase/types'
+import { summarizeRows } from '@/lib/enrichment/contactPrioritizer'
 
 const LIST_TYPE_META: Record<string, { label: string; bg: string; color: string }> = {
   A: { label: 'Type A — Name + Email',    bg: '#dbeafe', color: '#1e40af' },
@@ -639,6 +640,42 @@ export default function JobPage() {
             <p style={{ marginTop: '0.25rem', color: '#6b7280', fontSize: '13px' }}>{ignoredSources.join(', ')}</p>
           </div>
         )}
+
+        {preview && preview.length > 0 && (() => {
+          const qa = summarizeRows(preview)
+          const pills: { label: string; count: number; bg: string; color: string }[] = [
+            { label: 'P1 ready',  count: qa.p1,       bg: '#dcfce7', color: '#166534' },
+            { label: 'P2 partial', count: qa.p2,      bg: '#dbeafe', color: '#1e40af' },
+            { label: 'P3 review', count: qa.p3,       bg: '#fef9c3', color: '#854d0e' },
+            { label: 'Excluded',  count: qa.excluded, bg: '#f3f4f6', color: '#6b7280' },
+            { label: 'Rejected',  count: qa.rejected, bg: '#fee2e2', color: '#991b1b' },
+          ]
+          return (
+            <div style={{ marginTop: '1rem' }}>
+              <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '0.5rem' }}>
+                Contact prioritization preview (first {qa.total} rows)
+              </p>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {pills.map(({ label, count, bg, color }) => (
+                  <span
+                    key={label}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                      padding: '3px 10px', borderRadius: '9999px', fontSize: '12px',
+                      fontWeight: 500,
+                      background: count === 0 ? '#f9fafb' : bg,
+                      color:      count === 0 ? '#d1d5db' : color,
+                      border:     `1px solid ${count === 0 ? '#e5e7eb' : 'transparent'}`,
+                    }}
+                  >
+                    <span style={{ fontWeight: 700 }}>{count}</span>
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
 
         <div style={{ marginTop: '1.5rem' }}>
           <h3 style={{ marginBottom: '0.75rem', fontSize: '15px' }}>Preview formatted data</h3>

@@ -80,6 +80,15 @@ export type EnrichRow = {
   branch1_status: 'pending' | 'running' | 'found' | 'not_found' | 'failed'
   branch2_status: 'pending' | 'running' | 'found' | 'not_found' | 'failed'
   merged_data: Record<string, unknown> | null
+  // QA fields — populated by prioritizeRows() before enrichment runs
+  priority_tier: 'P1' | 'P2' | 'P3' | 'Rejected' | 'Excluded' | null
+  rejected: boolean | null
+  rejection_reason: string | null
+  needs_review: boolean | null
+  work_email: boolean | null
+  inferred_website: string | null
+  inferred_company: string | null
+  team_name_normalized: string | null
 }
 
 export type InsertEnrichRow = {

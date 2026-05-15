@@ -1,5 +1,31 @@
 # Release Notes
 
+## [0.5.0] — 2026-05-15 — Pre-enrichment contact prioritization and QA
+
+### Added
+- `lib/enrichment/contactPrioritizer.ts` — `prioritizeRows(rows)`: full QA pipeline (Fello exclusion → team name deduplication → RE validation → email/phone classification → company mismatch → priority tier assignment); `summarizeRows(rows)`: lightweight version operating on `GenericFormattedRow[]` for client-side UI previews
+- `supabase/migrations/20260515143000_enrich_rows_qa_columns.sql` — 8 new nullable columns on `enrich_rows`: `priority_tier`, `rejected`, `rejection_reason`, `needs_review`, `work_email`, `inferred_website`, `inferred_company`, `team_name_normalized`
+
+### Changed
+- `app/api/enrich/pipeline/route.ts` — QA step inserted at start of `runPipeline`: runs `prioritizeRows` on fetched rows, writes 8 QA fields back to DB in parallel, then filters out `Excluded` and `Rejected` rows before passing to Branch 1 and Branch 2
+- `lib/supabase/types.ts` — `EnrichRow` extended with 8 new nullable QA fields
+- `app/jobs/[jobId]/page.tsx` — contact prioritization summary bar added to STATE B (confirmation page): 5 colored pills (P1/P2/P3/Excluded/Rejected) computed from preview rows via `summarizeRows`; zero counts shown muted
+
+### Schema changes (applied via migration)
+```sql
+ALTER TABLE enrich_rows
+  ADD COLUMN IF NOT EXISTS priority_tier text,
+  ADD COLUMN IF NOT EXISTS rejected boolean,
+  ADD COLUMN IF NOT EXISTS rejection_reason text,
+  ADD COLUMN IF NOT EXISTS needs_review boolean,
+  ADD COLUMN IF NOT EXISTS work_email boolean,
+  ADD COLUMN IF NOT EXISTS inferred_website text,
+  ADD COLUMN IF NOT EXISTS inferred_company text,
+  ADD COLUMN IF NOT EXISTS team_name_normalized text;
+```
+
+---
+
 ## [0.4.2] — 2026-05-15 — List type badge on confirmation page
 
 ### Added

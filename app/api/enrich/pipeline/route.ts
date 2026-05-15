@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { updateJob } from '@/lib/supabase/jobs'
+import { prioritizeRows } from '@/lib/enrichment/contactPrioritizer'
+import type { EnrichRow as TypedRow } from '@/lib/supabase/types'
 
 const ZILLOW_ZIP_BASE = 'https://zillow-zip.up.railway.app'
 const ASYNC_URL = 'https://team-size-webhook-production.up.railway.app/api/v1/enrich/async'
@@ -46,16 +48,45 @@ async function runPipeline(jobId: string) {
 
     console.log('[Pipeline] Processing', rows.length, 'rows')
 
+    // ── QA: prioritize + flag rows before any enrichment runs ──────────────────
+    const prioritized = prioritizeRows(rows as TypedRow[])
+
+    // Write all QA fields back to DB in parallel
+    await Promise.all(prioritized.map(r =>
+      supabaseAdmin
+        .from('enrich_rows')
+        .update({
+          priority_tier:    r.priority_tier    ?? null,
+          rejected:         r.rejected         ?? null,
+          rejection_reason: r.rejection_reason ?? null,
+          needs_review:     r.needs_review     ?? null,
+          work_email:       r.work_email       ?? null,
+          inferred_website: r.inferred_website ?? null,
+          inferred_company: r.inferred_company ?? null,
+          team_name_normalized: r.team_name_normalized ?? null,
+        })
+        .eq('id', r.id)
+    ))
+
+    // Excluded (Fello) and Rejected (non-RE) rows never enter enrichment
+    const enrichableRows = prioritized.filter(
+      r => r.priority_tier !== 'Excluded' && r.priority_tier !== 'Rejected'
+    ) as EnrichRow[]
+
+    const skipped = rows.length - enrichableRows.length
+    if (skipped > 0) console.log('[Pipeline] Skipping', skipped, 'excluded/rejected rows')
+    // ── End QA ─────────────────────────────────────────────────────────────────
+
     await updateJob(jobId, {
       status: 'both_running',
       branch1_status: 'running',
       branch2_status: 'running',
     })
 
-    // Run both branches in parallel
+    // Run both branches in parallel against enrichable rows only
     const [b1Count, b2Count] = await Promise.all([
-      runBranch1(jobId, rows),
-      runBranch2(jobId, rows),
+      runBranch1(jobId, enrichableRows),
+      runBranch2(jobId, enrichableRows),
     ])
 
     console.log('[Pipeline] Both complete. B1:', b1Count, 'B2:', b2Count)

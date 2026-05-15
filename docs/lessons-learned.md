@@ -14,6 +14,12 @@ Next.js 14 App Router attempts to statically prerender GET routes at build time 
 ### `next.config.ts` is not supported in Next.js 14
 Next.js 14 (pre-15) does not support `next.config.ts`. Must use `next.config.js` or `next.config.mjs`.
 
+### Supabase migration history repair workflow
+When `supabase db push` fails with "Remote migration versions not found in local migrations directory", the remote history table has a version the CLI cannot match to a local file. Fix: `supabase migration repair --status reverted <version>` to remove the stray remote entry, then re-push. The `IF NOT EXISTS` guards in migration SQL make re-applying idempotent.
+
+### Spreading a Set requires `Array.from()` under the project's TypeScript target
+`[...new Set(...)]` triggers "Type 'Set' can only be iterated through when using '--downlevelIteration'". Use `Array.from(new Set(...))` instead — same result, no tsconfig change needed.
+
 ### Do not import server-side lib files into client components
 `lib/enrichment/columnDetector.ts` imports `@google/generative-ai`. Importing it into a `"use client"` component pulls the Gemini SDK into the browser bundle. For UI-only use of pure logic that lives in a server-side file, inline the logic directly in the component file rather than importing it.
 
