@@ -1,6 +1,35 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { env } from '../env'
-import type { ColumnMapping, ColumnMappingField } from '../supabase/types'
+import type { ColumnMapping, ColumnMappingField, ColumnMappingReport, ListType } from '../supabase/types'
+
+export function classifyListType(mapping: ColumnMapping): ListType {
+  const hasName = mapping.name.source_column !== null
+  const hasEmail = mapping.email.source_column !== null
+  const hasTeamName = mapping.team_name.source_column !== null
+
+  if (hasName && hasEmail) return 'A'
+  if (hasName && !hasEmail) return 'B'
+  if (hasEmail && !hasName) return 'C'
+  if (hasTeamName && !hasName && !hasEmail) return 'D'
+  return 'E'
+}
+
+export function buildColumnMappingReport(mapping: ColumnMapping): ColumnMappingReport {
+  const fields = Object.keys(mapping) as (keyof ColumnMapping)[]
+  const mapped: ColumnMappingReport['mapped'] = []
+  const absent: ColumnMappingReport['absent'] = []
+
+  for (const field of fields) {
+    const entry = mapping[field]
+    if (entry.source_column !== null) {
+      mapped.push({ targetField: field, sourceColumn: entry.source_column, confidence: entry.confidence })
+    } else {
+      absent.push(field)
+    }
+  }
+
+  return { mapped, absent }
+}
 
 const TARGET_FIELDS: Record<keyof ColumnMapping, string> = {
   name: "the person full name. If there is a single full name column, map source_column to it. If there are only separate first name and last name columns (no combined name column), set source_column to a JSON string like \"first_name|last_name\" using pipe as separator between the two column names.",

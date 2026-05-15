@@ -14,6 +14,9 @@ Next.js 14 App Router attempts to statically prerender GET routes at build time 
 ### `next.config.ts` is not supported in Next.js 14
 Next.js 14 (pre-15) does not support `next.config.ts`. Must use `next.config.js` or `next.config.mjs`.
 
+### Classification and report are computed at confirm time, not at detect time
+`classifyListType` and `buildColumnMappingReport` run in `save-and-run` (confirm route), not in `detectColumnMapping`. This is intentional: the user may adjust the mapping before confirming, so classification must reflect the final confirmed mapping, not Gemini's initial output.
+
 ## Decisions
 
 ### Proxy pattern for Supabase clients

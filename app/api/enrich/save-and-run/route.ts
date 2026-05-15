@@ -2,11 +2,23 @@ import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { getJob, updateJob } from '@/lib/supabase/jobs'
 import { env } from '@/lib/env'
+import { classifyListType, buildColumnMappingReport } from '@/lib/enrichment/columnDetector'
 import type { ColumnMapping } from '@/lib/supabase/types'
 
 const columnMappingFieldSchema = z.object({
   source_column: z.string().nullable(),
   confidence: z.enum(['high', 'medium', 'low', 'none']),
+})
+
+const listTypeSchema = z.enum(['A', 'B', 'C', 'D', 'E'])
+
+const columnMappingReportSchema = z.object({
+  mapped: z.array(z.object({
+    targetField: z.enum(['name', 'email', 'phone', 'team_name', 'brokerage', 'website', 'location']),
+    sourceColumn: z.string(),
+    confidence: z.enum(['high', 'medium', 'low', 'none']),
+  })),
+  absent: z.array(z.enum(['name', 'email', 'phone', 'team_name', 'brokerage', 'website', 'location'])),
 })
 
 const columnMappingSchema = z.object({
@@ -44,9 +56,14 @@ export async function POST(request: NextRequest) {
     )
   }
 
+  const listType = listTypeSchema.parse(classifyListType(columnMapping as ColumnMapping))
+  const report = columnMappingReportSchema.parse(buildColumnMappingReport(columnMapping as ColumnMapping))
+
   await updateJob(jobId, {
     column_mapping: columnMapping as ColumnMapping,
     mapping_confirmed: true,
+    list_type: listType,
+    column_mapping_report: report,
     status: 'generating',
   })
 

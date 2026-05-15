@@ -24,6 +24,19 @@ export type ColumnMapping = {
   location: ColumnMappingField
 }
 
+export type ListType = 'A' | 'B' | 'C' | 'D' | 'E'
+
+export type ColumnMappingReportEntry = {
+  targetField: keyof ColumnMapping
+  sourceColumn: string
+  confidence: ColumnMappingField['confidence']
+}
+
+export type ColumnMappingReport = {
+  mapped: ColumnMappingReportEntry[]
+  absent: (keyof ColumnMapping)[]
+}
+
 export type EnrichJob = {
   id: string
   created_at: string
@@ -33,6 +46,8 @@ export type EnrichJob = {
   parsed_at: string | null
   column_mapping: ColumnMapping | null
   mapping_confirmed: boolean
+  list_type: ListType | null
+  column_mapping_report: ColumnMappingReport | null
   source_headers: string[] | null
   raw_csv: string | null
   hs_ticket_url: string | null

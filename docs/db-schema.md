@@ -18,6 +18,8 @@ One row per enrichment run. Tracks the full lifecycle from sheet ingestion to Hu
 | `parsed_at` | `timestamptz` | `null` | Set when rows are written to `enrich_rows` |
 | `column_mapping` | `jsonb` | `null` | Gemini output: array of `{ sourceColumn, targetField, confidence }` + `unmapped[]` |
 | `mapping_confirmed` | `bool` | `false` | Set true when user confirms mapping |
+| `list_type` | `text` | `null` | Set at confirm time: `A` (name+email), `B` (name only), `C` (email only), `D` (team_name, no name/email), `E` (other) |
+| `column_mapping_report` | `jsonb` | `null` | Set at confirm time: `{ mapped: [{targetField, sourceColumn, confidence}], absent: [targetField] }` |
 | `status` | `text` | `'pending'` | See status values below |
 | `team_size_status` | `text` | `'idle'` | `idle \| running \| complete \| failed` |
 | `zillow_status` | `text` | `'idle'` | `idle \| running \| complete \| failed` |

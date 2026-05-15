@@ -1,5 +1,23 @@
 # Release Notes
 
+## [0.4.1] — 2026-05-15 — Input schema detection: list type classification + column mapping report
+
+### Added
+- `lib/enrichment/columnDetector.ts` — `classifyListType(mapping)`: pure function, classifies a confirmed `ColumnMapping` into one of five list types (A–E) based on which key fields were detected; no second Gemini call
+- `lib/enrichment/columnDetector.ts` — `buildColumnMappingReport(mapping)`: pure function, produces `{ mapped: [{targetField, sourceColumn, confidence}], absent: [targetField] }` from the confirmed mapping
+- `lib/supabase/types.ts` — new exported types: `ListType`, `ColumnMappingReportEntry`, `ColumnMappingReport`; `EnrichJob` extended with `list_type` and `column_mapping_report` fields
+- `app/api/enrich/save-and-run/route.ts` — at confirm time, computes `list_type` and `column_mapping_report` from the user-confirmed mapping, Zod-validates both, and writes them to `enrich_jobs` alongside the existing `mapping_confirmed` update
+- `supabase/migrations/20260515_add_list_type_column_mapping_report.sql` — `ALTER TABLE enrich_jobs ADD COLUMN IF NOT EXISTS list_type text, column_mapping_report jsonb`
+
+### Schema changes (apply in Supabase dashboard)
+```sql
+ALTER TABLE enrich_jobs
+  ADD COLUMN IF NOT EXISTS list_type text,
+  ADD COLUMN IF NOT EXISTS column_mapping_report jsonb;
+```
+
+---
+
 ## [0.4.0] — 2026-05-07 — Parallel team-size pipeline, pipe-syntax field mapping, merged_data expansion
 
 ### Added
