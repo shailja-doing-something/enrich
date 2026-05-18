@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
-import type { EnrichJob, ColumnMapping, ColumnMappingField, GenericFormattedRow } from '@/lib/supabase/types'
-import { summarizeRows } from '@/lib/enrichment/contactPrioritizer'
+import type { EnrichJob, EnrichRow, ColumnMapping, ColumnMappingField, GenericFormattedRow } from '@/lib/supabase/types'
+import { summarizeRows, prioritizeRows } from '@/lib/enrichment/contactPrioritizer'
 
 const LIST_TYPE_META: Record<string, { label: string; bg: string; color: string }> = {
   A: { label: 'Type A — Name + Email',    bg: '#dbeafe', color: '#1e40af' },
@@ -24,6 +24,39 @@ function deriveListType(mapping: ColumnMapping): string {
   return 'E'
 }
 
+// Maps each preview row's original index to its priority tier, using the same
+// classification as summarizeRows() so filter counts stay consistent with pill totals.
+function buildTierMap(rows: GenericFormattedRow[]): Map<number, string> {
+  const enrichRows: EnrichRow[] = rows.map((row, i) => ({
+    id: String(i),
+    job_id: '',
+    row_index: i,
+    hs_ticket_url: row.hs_ticket_url,
+    raw_data: {} as Record<string, string>,
+    formatted_input: row,
+    enriched_data: null,
+    enrichment_status: 'pending' as const,
+    stage_reached: null,
+    team_size_data: null,
+    contact_data: null,
+    branch1_status: 'pending' as const,
+    branch2_status: 'pending' as const,
+    merged_data: null,
+    priority_tier: null,
+    rejected: null,
+    rejection_reason: null,
+    needs_review: null,
+    work_email: null,
+    inferred_website: null,
+    inferred_company: null,
+    team_name_normalized: null,
+  }))
+  const prioritized = prioritizeRows(enrichRows)
+  const map = new Map<number, string>()
+  for (const r of prioritized) map.set(parseInt(r.id), r.priority_tier ?? 'P3')
+  return map
+}
+
 export default function JobPage() {
   const params = useParams()
   const jobId = params?.jobId as string
@@ -37,6 +70,7 @@ export default function JobPage() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [networkError, setNetworkError] = useState(false)
   const [localMapping, setLocalMapping] = useState<ColumnMapping | null>(null)
+  const [activePill, setActivePill] = useState<string | null>(null)
 
   const mountedRef = useRef(true)
   const failureCountRef = useRef(0)
@@ -113,6 +147,7 @@ export default function JobPage() {
     if (!localMapping || !job?.id) return
     if (job.status !== 'awaiting_confirmation') return
 
+    setActivePill(null)
     setPreviewLoading(true)
     fetch('/api/enrich/preview', {
       method: 'POST',
@@ -247,6 +282,19 @@ export default function JobPage() {
       team_name: 'Team Name', brokerage: 'Brokerage', website: 'Website', location: 'Location',
     }
 
+    const FIELD_DISPLAY_ORDER: (keyof ColumnMapping)[] = [
+      'name', 'email', 'phone', 'team_name', 'brokerage', 'website', 'location',
+    ]
+    const detectedFields = FIELD_DISPLAY_ORDER
+      .filter(f => mapping[f].source_column !== null)
+      .map(f => fieldLabels[f])
+    const badgeLabel = `Type ${listType} — ${detectedFields.length > 0 ? detectedFields.join(' · ') : 'No fields detected'}`
+
+    const tierMap = preview ? buildTierMap(preview) : new Map<number, string>()
+    const filteredPreview = preview && activePill
+      ? preview.filter((_, i) => tierMap.get(i) === activePill)
+      : (preview ?? [])
+
     const sourceHeaders = job.source_headers ?? []
     const mappingEntries = Object.entries(mapping) as [keyof ColumnMapping, ColumnMappingField][]
     const willBeBlank = mappingEntries.filter(([, val]) => val.source_column === null).map(([field]) => fieldLabels[field] ?? field)
@@ -280,7 +328,7 @@ export default function JobPage() {
             background: listTypeMeta.bg,
             color: listTypeMeta.color,
           }}>
-            {listTypeMeta.label}
+            {badgeLabel}
           </span>
         </div>
 
@@ -346,35 +394,42 @@ export default function JobPage() {
 
         {preview && preview.length > 0 && (() => {
           const qa = summarizeRows(preview)
-          const pills: { label: string; count: number; bg: string; color: string }[] = [
-            { label: 'P1 ready',   count: qa.p1,       bg: '#dcfce7', color: '#166534' },
-            { label: 'P2 partial', count: qa.p2,       bg: '#dbeafe', color: '#1e40af' },
-            { label: 'P3 review',  count: qa.p3,       bg: '#fef9c3', color: '#854d0e' },
-            { label: 'Excluded',   count: qa.excluded, bg: '#f3f4f6', color: '#6b7280' },
-            { label: 'Rejected',   count: qa.rejected, bg: '#fee2e2', color: '#991b1b' },
+          const pills: { tier: string; label: string; count: number; bg: string; color: string; activeBg: string; activeColor: string }[] = [
+            { tier: 'P1',       label: 'P1 ready',   count: qa.p1,       bg: '#dcfce7', color: '#166534', activeBg: '#16a34a', activeColor: '#fff' },
+            { tier: 'P2',       label: 'P2 partial', count: qa.p2,       bg: '#dbeafe', color: '#1e40af', activeBg: '#2563eb', activeColor: '#fff' },
+            { tier: 'P3',       label: 'P3 review',  count: qa.p3,       bg: '#fef9c3', color: '#854d0e', activeBg: '#d97706', activeColor: '#fff' },
+            { tier: 'Excluded', label: 'Excluded',   count: qa.excluded, bg: '#f3f4f6', color: '#6b7280', activeBg: '#4b5563', activeColor: '#fff' },
+            { tier: 'Rejected', label: 'Rejected',   count: qa.rejected, bg: '#fee2e2', color: '#991b1b', activeBg: '#dc2626', activeColor: '#fff' },
           ]
           return (
             <div style={{ marginTop: '1rem' }}>
               <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '0.5rem' }}>
-                Contact prioritization preview (first {qa.total} rows)
+                Contact prioritization preview (first {qa.total} rows) · click a tier to filter
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {pills.map(({ label, count, bg, color }) => (
-                  <span
-                    key={label}
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
-                      padding: '3px 10px', borderRadius: '9999px', fontSize: '12px',
-                      fontWeight: 500,
-                      background: count === 0 ? '#f9fafb' : bg,
-                      color:      count === 0 ? '#d1d5db' : color,
-                      border:     `1px solid ${count === 0 ? '#e5e7eb' : 'transparent'}`,
-                    }}
-                  >
-                    <span style={{ fontWeight: 700 }}>{count}</span>
-                    {label}
-                  </span>
-                ))}
+                {pills.map(({ tier, label, count, bg, color, activeBg, activeColor }) => {
+                  const isActive = activePill === tier
+                  const isEmpty = count === 0
+                  return (
+                    <span
+                      key={tier}
+                      onClick={() => !isEmpty && setActivePill(prev => prev === tier ? null : tier)}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                        padding: '3px 10px', borderRadius: '9999px', fontSize: '12px',
+                        fontWeight: 500,
+                        background: isEmpty ? '#f9fafb' : isActive ? activeBg : bg,
+                        color:      isEmpty ? '#d1d5db' : isActive ? activeColor : color,
+                        border:     `1px solid ${isEmpty ? '#e5e7eb' : isActive ? activeBg : 'transparent'}`,
+                        cursor:     isEmpty ? 'default' : 'pointer',
+                        userSelect: 'none',
+                      }}
+                    >
+                      <span style={{ fontWeight: 700 }}>{count}</span>
+                      {label}
+                    </span>
+                  )
+                })}
               </div>
             </div>
           )
@@ -383,7 +438,7 @@ export default function JobPage() {
         <div style={{ marginTop: '1.5rem' }}>
           <h3 style={{ marginBottom: '0.75rem', fontSize: '15px' }}>Preview formatted data</h3>
           {previewLoading && <p style={{ color: '#9ca3af', fontSize: '13px' }}>Loading preview...</p>}
-          {!previewLoading && preview && preview.length > 0 && (
+          {!previewLoading && preview && preview.length > 0 && filteredPreview.length > 0 && (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', border: '1px solid #e5e7eb' }}>
                 <thead>
@@ -394,7 +449,7 @@ export default function JobPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {preview.map((row, i) => (
+                  {filteredPreview.map((row, i) => (
                     <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
                       {PREVIEW_COLS.map(k => (
                         <td key={k} style={{ padding: '0.5rem 0.75rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -406,6 +461,9 @@ export default function JobPage() {
                 </tbody>
               </table>
             </div>
+          )}
+          {!previewLoading && preview && preview.length > 0 && filteredPreview.length === 0 && activePill && (
+            <p style={{ color: '#9ca3af', fontSize: '13px' }}>No {activePill} rows in this preview sample.</p>
           )}
           {!previewLoading && (!preview || preview.length === 0) && localMapping && (
             <p style={{ color: '#9ca3af', fontSize: '13px' }}>No preview available</p>
@@ -424,7 +482,7 @@ export default function JobPage() {
             cursor: saving ? 'not-allowed' : 'pointer',
           }}
         >
-          {saving ? 'Submitting...' : 'Approve and submit'}
+          {saving ? 'Submitting...' : 'Approve and run enrichment'}
         </button>
       </div>
     )
