@@ -63,6 +63,8 @@ export type EnrichJob = {
   branch2_found_count: number | null
   hubspot_written_at: string | null
   error_log: string | null
+  approval_status: 'approved' | null
+  approved_at: string | null
 }
 
 export type EnrichRow = {

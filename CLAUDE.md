@@ -30,15 +30,20 @@ enrich/
 
 ## Pipeline Architecture
 ```
-Upload CSV → Gemini maps headers → User confirms → Edge Function generates rows
+Upload CSV → Gemini maps headers → User reviews → "Approve and submit"
      ↓
-enrich_rows.formatted_input (GenericFormattedRow, 8 fields)
+POST /api/enrich/save-and-run
+  - Records mapping_confirmed=true, list_type, column_mapping_report
+  - Records approval_status='approved', approved_at=now()
+  - Status stays: awaiting_confirmation
+  - Returns { data: { jobId, approval_status: 'approved' } }
      ↓
-Stage 1: first endpoint (TBD)       → stage1_found_count, stage1_completed_at
-Stage 2: DB table lookup (TBD)      → stage2_found_count, stage2_completed_at
-Stage 3: scrape endpoint (TBD)      → stage3_found_count, stage3_completed_at
-     ↓
-HubSpot write → hubspot_written_at
+UI shows: "List approved. Ready for enrichment pipeline."
+  (polling stops — no downstream trigger from this codebase)
+
+Downstream (pending new pipeline integration):
+  Row generation → Branch 1 team-size → Branch 2 contact → merge → HubSpot write
+  Route files exist in app/api/enrich/ but are not wired to any upstream trigger.
 ```
 
 ## GenericFormattedRow (single template, always 8 fields)

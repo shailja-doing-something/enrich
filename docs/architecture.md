@@ -5,37 +5,49 @@
 Enrich is a two-phase pipeline. Phase 1 (this codebase) handles ingestion, AI-assisted column mapping, and templated sheet generation. Phase 2 (separate module) connects external enrichers and writes back to HubSpot.
 
 ```
-Phase 1 — Parse & Generate
+Phase 1 — Ingest & Approve (current)
 ─────────────────────────────────────────────────────────────
-User pastes sheet URL
+User uploads CSV + HubSpot ticket URL
         │
         ▼
-POST /api/enrichment/start
+POST /api/enrich/start
   - Create enrich_jobs row (status: parsing)
-  - Fetch sheet as CSV (public export URL)
+  - Parse CSV via papaparse
   - Extract header row only
   - Call Gemini: map headers → known target fields + confidence
   - Store mapping in enrich_jobs.column_mapping (status: awaiting_confirmation)
-  - Return { jobId, mapping, unmappedColumns }
+  - Return { jobId, mapping, sourceHeaders }
         │
         ▼
-UI: Show mapping to user
-  - High confidence fields shown collapsed
-  - Medium/low confidence shown for review
-  - User confirms or adjusts
+UI: Show mapping to user (STATE B)
+  - List type badge (A–E)
+  - Column mapping table with override dropdowns
+  - Blank field warnings + ignored columns
+  - Live preview table (first 10 rows via /api/enrich/preview)
+  - QA summary bar (P1/P2/P3/Excluded/Rejected via summarizeRows)
+  - User reviews and clicks "Approve and submit"
         │
         ▼
-POST /api/enrichment/confirm
-  - Mark enrich_jobs.mapping_confirmed = true (status: generating)
-  - Parse all data rows using confirmed mapping
-  - For each row: generate team_size_input + zillow_input
-  - Bulk insert into enrich_rows
-  - Update enrich_jobs (status: ready, raw_row_count, parsed_at)
-  - Return { rowCount }
+POST /api/enrich/save-and-run
+  - Validate confirmed mapping
+  - Compute list_type + column_mapping_report
+  - Write to enrich_jobs: mapping_confirmed=true, list_type, column_mapping_report,
+    approval_status='approved', approved_at=now()
+  - Status stays: awaiting_confirmation
+  - Return { data: { jobId, approval_status: 'approved' } }
+        │
+        ▼
+UI: Show approved state
+  - "List approved. Ready for enrichment pipeline."
+  - Job ID visible
+  - Polling stops — no further steps triggered from this codebase
 
-Phase 2 — Enrich & Merge (separate module)
+Phase 2 — Enrich & Merge (pending new pipeline integration)
 ─────────────────────────────────────────────────────────────
-  [Documented in Phase 2 repo]
+  The enrichment pipeline (row generation → Branch 1 team-size → Branch 2 contact
+  → merge → HubSpot write) has been decoupled from Phase 1. It will be triggered
+  externally after approval. Route files and logic are kept in place but not wired
+  to any upstream trigger. See release-notes.md [0.6.0] for details.
 ```
 
 ---

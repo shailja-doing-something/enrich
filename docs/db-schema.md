@@ -28,6 +28,8 @@ One row per enrichment run. Tracks the full lifecycle from sheet ingestion to Hu
 | `merged_at` | `timestamptz` | `null` | Phase 2 |
 | `hubspot_written_at` | `timestamptz` | `null` | Phase 2 |
 | `error_log` | `text` | `null` | Last error message for this job |
+| `approval_status` | `text` | `null` | `'approved'` when user approves the mapping; null until then |
+| `approved_at` | `timestamptz` | `null` | Timestamp of user approval — set by `save-and-run` route |
 
 **Status values (in order):**
 `pending → parsing → mapping → awaiting_confirmation → generating → ready → running → complete → failed`

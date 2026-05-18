@@ -70,3 +70,12 @@ Without `exact=true`, fuzzy matching returns unrelated agents. Pass `exact=true&
 
 ### Railway CDN caches GET responses aggressively
 `Cache-Control` on the response alone isn't enough — Railway's CDN ignores it. Fix requires: `export const revalidate = 0` + `export const fetchCache = 'force-no-store'` on the route module, full cache headers on the response, AND a `?t=${Date.now()}` cache-buster on every client fetch.
+
+### Stopping polling on a field other than `status`
+The job detail page polling loop checked `status` to determine terminal state. When the terminal signal lives in a different column (`approval_status === 'approved'`), add the check inside the poll callback and `return` early — do not add `'approved'` to the TERMINAL status list because it is not a `status` value.
+
+### Unused imports after disabling calls leave TypeScript errors
+When commenting out a fetch call that was the only consumer of an `import`, comment out the import too. In `auto-run/route.ts`, `updateJob` was imported only for the disabled pipeline trigger — leaving it imported would produce an unused-variable error under strict mode.
+
+### Pipeline status must not advance when the pipeline is not running
+The `save-and-run` route previously set `status: 'generating'` to signal row generation had started. After removing the Edge Function trigger, do not set that status — the job should stay at `awaiting_confirmation`. Only set the two new approval columns. Setting `generating` without the Edge Function running would leave the job stuck with no way to progress.

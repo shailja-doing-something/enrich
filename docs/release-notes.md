@@ -1,5 +1,32 @@
 # Release Notes
 
+## [0.6.0] — 2026-05-18 — Pipeline handoff: approval-only flow
+
+### Changed
+- `app/api/enrich/save-and-run/route.ts` — removed Edge Function trigger and `status: 'generating'` update; now writes `approval_status: 'approved'` and `approved_at` to the job; status stays `awaiting_confirmation`; returns `{ data: { jobId, approval_status: 'approved' } }`
+- `app/api/enrich/auto-run/route.ts` — disabled pipeline fetch and `status: 'both_running'` update; route still validates the job but does nothing further
+- `app/api/enrich/pipeline/route.ts` — disabled `prioritizeRows` import and QA DB write block; remaining branch logic is inert (route not triggered by any upstream call)
+- `app/jobs/[jobId]/page.tsx` — stripped all post-confirmation UI (STATE C/D/E, generating/ready spinners, auto-run firing, rows download); changed button label from "Save and run enrichment" to "Approve and submit"; added approved state: "List approved. Ready for enrichment pipeline." with job ID; polling stops on `approval_status === 'approved'`
+- `supabase/functions/generate-enrich-rows/index.ts` — added top-level disabled comment; commented out auto-run trigger at end of success path
+- `lib/supabase/types.ts` — `EnrichJob` extended with `approval_status: 'approved' | null` and `approved_at: string | null`
+
+### Added
+- `supabase/migrations/20260518120000_enrich_job_approval.sql` — adds `approval_status text` and `approved_at timestamptz` to `enrich_jobs`
+
+### Schema changes (apply in Supabase dashboard)
+```sql
+ALTER TABLE enrich_jobs
+  ADD COLUMN IF NOT EXISTS approval_status text,
+  ADD COLUMN IF NOT EXISTS approved_at timestamptz;
+```
+
+### Files intentionally kept but disabled
+- `lib/enrichment/contactPrioritizer.ts` — file intact; call disabled in `pipeline/route.ts`
+- `supabase/functions/generate-enrich-rows/index.ts` — file intact; trigger removed from `save-and-run`; internal auto-run call disabled
+- All run/pipeline/merge-results routes — untouched; not wired to any upstream trigger
+
+---
+
 ## [0.5.0] — 2026-05-15 — Pre-enrichment contact prioritization and QA
 
 ### Added
