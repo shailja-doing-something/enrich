@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation'
 import type { EnrichJob } from '@/lib/supabase/types'
 
 type CompanyBatch = {
-  id: string
-  uploaded_at: string
-  row_count: number
+  batch_id: string
+  source_file: string
+  created_at: string
+  total_rows: number
   status: string
 }
 
@@ -409,6 +410,7 @@ export default function DashboardPage() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">File</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Rows</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Action</th>
@@ -416,18 +418,21 @@ export default function DashboardPage() {
             </thead>
             <tbody className="divide-y divide-gray-100 bg-white">
               {ceBatches.map((batch) => (
-                <tr key={batch.id}>
+                <tr key={batch.batch_id}>
                   <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                    {new Date(batch.uploaded_at).toLocaleString()}
+                    {new Date(batch.created_at).toLocaleString()}
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{batch.row_count}</td>
+                  <td className="px-4 py-3 text-gray-600 max-w-xs truncate" title={batch.source_file}>
+                    {batch.source_file}
+                  </td>
+                  <td className="px-4 py-3 text-gray-600">{batch.total_rows}</td>
                   <td className="px-4 py-3">
                     <BatchStatusBadge status={batch.status} />
                   </td>
                   <td className="px-4 py-3">
                     {batch.status === 'complete' && (
                       <a
-                        href={`/api/company-enrichment/export/${batch.id}`}
+                        href={`/api/company-enrichment/export/${batch.batch_id}`}
                         className="text-blue-600 hover:underline text-sm"
                       >
                         Download CSV

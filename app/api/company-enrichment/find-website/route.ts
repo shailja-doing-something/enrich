@@ -8,7 +8,7 @@ import { env } from '@/lib/env'
 const bodySchema = z.object({ batch_id: z.string().uuid() })
 
 type TeamRow = {
-  id: string
+  team_id: string
   team_name: string | null
   brokerage: string | null
   location: string | null
@@ -26,10 +26,7 @@ function callFindWebsite(team: TeamRow): Promise<string> {
       },
     })
 
-    const timer = setTimeout(() => {
-      proc.kill()
-      resolve('')
-    }, 60_000)
+    const timer = setTimeout(() => { proc.kill(); resolve('') }, 60_000)
 
     let stdout = ''
     let stderr = ''
@@ -96,14 +93,14 @@ export async function POST(request: NextRequest) {
     const website = await callFindWebsite(team)
     if (website) {
       const { error } = await supabaseAdmin.rpc('ce_update_team_website', {
-        p_team_id: team.id,
-        p_website: website,
+        p_team_id: team.team_id,
+        p_website_url: website,
       })
-      if (error) console.error(`update website for ${team.id}: ${error.message}`)
+      if (error) console.error(`update website for ${team.team_id}: ${error.message}`)
     }
   }
 
-  // Zillow stage skipped — zillow_match left null
+  // Zillow stage skipped — zillow_url left null
 
   // Fire verify-urls (fire-and-forget)
   const appUrl = env.NEXT_PUBLIC_APP_URL

@@ -3,7 +3,7 @@
 verify_urls.py — Stage 3 of company enrichment pipeline.
 
 Input  (stdin): JSON { website: str }
-Output (stdout): JSON { verified_url: str }  — empty string if verification fails
+Output (stdout): JSON { valid: bool, error: str | null }
 
 Env vars available:
   OXYLABS_USERNAME
@@ -12,13 +12,13 @@ Env vars available:
 import sys
 import json
 
-def verify_url(website: str) -> str:
+def verify_url(website: str) -> tuple[bool, str | None]:
     # TODO: implement URL verification via Oxylabs
     # Suggested approach: fetch the URL through Oxylabs residential proxy,
     # confirm it returns 200 and matches expected content signals.
-    return ""
+    return False, None
 
 if __name__ == "__main__":
     data = json.load(sys.stdin)
-    verified_url = verify_url(website=data.get("website", ""))
-    print(json.dumps({"verified_url": verified_url}))
+    valid, error = verify_url(website=data.get("website", ""))
+    print(json.dumps({"valid": valid, "error": error}))

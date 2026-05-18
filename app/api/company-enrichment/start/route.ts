@@ -44,7 +44,8 @@ export async function POST(request: NextRequest) {
   const rowCount = rows.length
 
   const { data: batchId, error: batchErr } = await supabaseAdmin.rpc('ce_create_batch', {
-    p_row_count: rowCount,
+    p_source_file: file.name,
+    p_total_rows: rowCount,
   })
   if (batchErr) {
     console.error(batchErr.message)
