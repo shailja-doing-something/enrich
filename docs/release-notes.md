@@ -1,5 +1,53 @@
 # Release Notes
 
+## [0.7.0] — 2026-05-19 — Company enrichment flow
+
+### Added
+- `app/api/company-enrichment/start/route.ts` — POST: parses 4-column CSV (MAD_ID, Team Name, Brokerage, Location), creates a staging batch via RPC, inserts team rows via RPC, fires find-website pipeline fire-and-forget
+- `app/api/company-enrichment/find-website/route.ts` — POST: fetches teams, calls `scripts/find_website.py` per row (stdin/stdout JSON), writes website back, fires verify-urls fire-and-forget; Zillow stage skipped — `zillow_match` stays null
+- `app/api/company-enrichment/verify-urls/route.ts` — POST: fetches teams, calls `scripts/verify_urls.py` per row, writes verified_url back, marks batch complete
+- `app/api/company-enrichment/jobs/route.ts` — GET: returns all batches via `ce_get_batches()` RPC
+- `app/api/company-enrichment/jobs/[batch_id]/route.ts` — GET: returns teams for a batch via `ce_get_batch_teams()` RPC
+- `app/api/company-enrichment/export/[batch_id]/route.ts` — GET: CSV download of all team rows for a batch
+- `supabase/migrations/20260519130000_company_enrichment_setup.sql` — creates `staging.batches` + `staging.teams` (IF NOT EXISTS), adds `mad_id` to `staging.teams`, creates seven `public.ce_*` RPC functions as PostgREST workaround for unexposed staging schema
+- `scripts/find_website.py` — stub Python script; reads JSON from stdin, writes `{"website": ""}` to stdout; fill in Anthropic + Oxylabs logic
+- `scripts/verify_urls.py` — stub Python script; reads JSON from stdin, writes `{"verified_url": ""}` to stdout; fill in Oxylabs logic
+- `lib/env.ts` — added `OXYLABS_USERNAME`, `OXYLABS_PASSWORD`, `ANTHROPIC_API_KEY` as required getters
+- `app/page.tsx` — Company Enrichment section: CSV upload form + polling batch list with status badges and CSV download link
+
+### Architecture note
+`staging` schema is not exposed via PostgREST. Workaround: all reads/writes go through `SECURITY DEFINER` functions in the `public` schema (`ce_*`), called via `supabase.rpc()`. The functions execute with superuser privileges and access staging internally — PostgREST exposure is irrelevant inside a function body.
+
+### Schema changes (apply in Supabase dashboard)
+```sql
+CREATE SCHEMA IF NOT EXISTS staging;
+
+CREATE TABLE IF NOT EXISTS staging.batches (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  uploaded_at timestamptz DEFAULT now() NOT NULL,
+  row_count int NOT NULL,
+  status text NOT NULL DEFAULT 'pending'
+);
+
+CREATE TABLE IF NOT EXISTS staging.teams (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  batch_id uuid NOT NULL REFERENCES staging.batches(id) ON DELETE CASCADE,
+  team_name text, brokerage text, location text,
+  website text, zillow_match text, verified_url text,
+  status text NOT NULL DEFAULT 'pending'
+);
+
+ALTER TABLE staging.teams ADD COLUMN IF NOT EXISTS mad_id text;
+```
+Then run the full migration SQL for the `ce_*` RPC functions.
+
+### Env vars required (add to Railway + .env.local)
+- `OXYLABS_USERNAME`
+- `OXYLABS_PASSWORD`
+- `ANTHROPIC_API_KEY`
+
+---
+
 ## [0.6.0] — 2026-05-18 — Pipeline handoff: approval-only flow
 
 ### Changed

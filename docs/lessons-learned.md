@@ -2,6 +2,11 @@
 
 ## Gotchas
 
+### Accessing an unexposed Supabase schema via RPC
+PostgREST only serves schemas listed in the exposed schemas setting. Calling `.schema('staging')` from the JS client returns `PGRST106` if `staging` is not in that list. Workaround: create `SECURITY DEFINER` functions in the `public` schema that access the staging tables internally. Call them via `supabase.rpc('function_name', ...)`. The function runs with definer privileges on the Postgres server — PostgREST exposure is irrelevant inside the function body. Prefix all such functions (e.g. `ce_*`) to avoid collisions with application functions.
+
+
+
 ### `lib/env.ts` must use lazy getters, not eager evaluation
 `next build` imports all route modules during "Collecting page data" and "Generating static pages". If `env` is a plain object with values assigned at module load (`const env = { KEY: required('KEY') }`), the build throws even when env vars are present at runtime. Fix: use JS getter syntax (`get KEY() { return required('KEY') }`) so validation is deferred to first access inside a request handler.
 

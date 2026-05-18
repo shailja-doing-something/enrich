@@ -20,4 +20,7 @@ export const env = {
   get ZILLOW_ZIP_API_KEY() { return required('ZILLOW_ZIP_API_KEY') },
   get APP_URL() { return optional('APP_URL') },
   get NEXT_PUBLIC_APP_URL() { return process.env.NEXT_PUBLIC_APP_URL ?? 'https://enrich-production-1129.up.railway.app' },
+  get OXYLABS_USERNAME() { return required('OXYLABS_USERNAME') },
+  get OXYLABS_PASSWORD() { return required('OXYLABS_PASSWORD') },
+  get ANTHROPIC_API_KEY() { return required('ANTHROPIC_API_KEY') },
 }
