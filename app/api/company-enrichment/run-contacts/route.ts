@@ -90,13 +90,23 @@ async function runWebScraper(
   await fs.writeFile(inputCsvPath, csvContent, 'utf8')
 
   const discoverScript = path.join(process.cwd(), 'scripts', 'enrichment', 'web-scraper', 'discover_team_urls.py')
-  await runScript(discoverScript, [inputCsvPath], { cwd: teamDir, timeoutMs: 120_000 })
+  try {
+    await runScript(discoverScript, [inputCsvPath], { cwd: teamDir, timeoutMs: 120_000 })
+  } catch (err) {
+    console.error(`[run-contacts] web discover failed for ${team.team_name}: ${(err as Error).message}`)
+    return null
+  }
 
   const priorityUrlsExists = await fs.access(priorityUrlsPath).then(() => true).catch(() => false)
   if (!priorityUrlsExists) return null
 
   const orchestrateScript = path.join(process.cwd(), 'scripts', 'enrichment', 'web-scraper', 'orchestrate.py')
-  await runScript(orchestrateScript, [priorityUrlsPath], { cwd: teamDir, timeoutMs: 300_000 })
+  try {
+    await runScript(orchestrateScript, [priorityUrlsPath], { cwd: teamDir, timeoutMs: 300_000 })
+  } catch (err) {
+    console.error(`[run-contacts] web orchestrate failed for ${team.team_name}: ${(err as Error).message}`)
+    return null
+  }
 
   const agentsExists = await fs.access(agentsCsvPath).then(() => true).catch(() => false)
   return agentsExists ? agentsCsvPath : null
@@ -114,7 +124,12 @@ async function runZillowScraper(
   await fs.writeFile(inputCsvPath, csvContent, 'utf8')
 
   const script = path.join(process.cwd(), 'scripts', 'enrichment', 'zillow-scraper', 'zillow_team_scraper.py')
-  await runScript(script, [inputCsvPath], { cwd: teamDir, timeoutMs: 120_000 })
+  try {
+    await runScript(script, [inputCsvPath], { cwd: teamDir, timeoutMs: 120_000 })
+  } catch (err) {
+    console.error(`[run-contacts] zillow scraper failed for ${team.team_name}: ${(err as Error).message}`)
+    return null
+  }
 
   const exists = await fs.access(agentsCsvPath).then(() => true).catch(() => false)
   return exists ? agentsCsvPath : null
@@ -131,7 +146,12 @@ async function runMerge(
   if (zillowCsvPath) args.push('--zillow', zillowCsvPath)
   if (args.length === 0) return null
 
-  await runScript(mergeScript, args, { cwd: teamDir, timeoutMs: 120_000 })
+  try {
+    await runScript(mergeScript, args, { cwd: teamDir, timeoutMs: 120_000 })
+  } catch (err) {
+    console.error(`[run-contacts] merge failed: ${(err as Error).message}`)
+    return null
+  }
 
   const mergedPath = path.join(teamDir, 'agents_merged.csv')
   const exists = await fs.access(mergedPath).then(() => true).catch(() => false)
@@ -143,7 +163,12 @@ async function runClean(
   mergedCsvPath: string
 ): Promise<string | null> {
   const cleanScript = path.join(process.cwd(), 'scripts', 'enrichment', 'data-cleaning', 'clean_contacts.py')
-  await runScript(cleanScript, [mergedCsvPath], { cwd: teamDir, timeoutMs: 120_000 })
+  try {
+    await runScript(cleanScript, [mergedCsvPath], { cwd: teamDir, timeoutMs: 120_000 })
+  } catch (err) {
+    console.error(`[run-contacts] clean failed: ${(err as Error).message}`)
+    return null
+  }
 
   const xlsxPath = path.join(teamDir, 'agents_merged_contact_cleaned.xlsx')
   const exists = await fs.access(xlsxPath).then(() => true).catch(() => false)
@@ -240,11 +265,14 @@ export async function POST(request: NextRequest) {
   const batchTmpDir = path.join('/tmp', `enrich-${batch_id}`)
   let hasError = false
   let totalAgentsWritten = 0
+  const debugErrors: string[] = []
 
   for (const team of qualifiedTeams) {
     const teamDir = path.join(batchTmpDir, team.team_id)
+    console.log(`[run-contacts] processing team ${team.team_name} (${team.team_id}) zillow_valid=${team.zillow_valid} web_valid=${team.web_valid}`)
     try {
       const agents = await enrichTeam(team, batch_id, teamDir)
+      console.log(`[run-contacts] enrichTeam returned ${agents.length} agents for ${team.team_name}`)
 
       if (agents.length > 0) {
         const { error: insertErr } = await supabaseAdmin.rpc('ce_insert_agents_bulk', {
@@ -256,23 +284,31 @@ export async function POST(request: NextRequest) {
         totalAgentsWritten += agents.length
       }
 
-      await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
+      const { error: stageErr } = await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
         p_team_id: team.team_id,
         p_stage: 'contacts_done',
       })
+      if (stageErr) {
+        const msg = `stage update failed for ${team.team_name}: ${stageErr.message}`
+        console.error(`[run-contacts] ${msg}`)
+        debugErrors.push(msg)
+        hasError = true
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[run-contacts] team ${team.team_id} failed: ${msg}`)
+      console.error(`[run-contacts] team ${team.team_name} failed: ${msg}`)
+      debugErrors.push(`${team.team_name}: ${msg}`)
       hasError = true
       await supabaseAdmin.rpc('ce_update_batch_pipeline', {
         p_batch_id: batch_id,
         p_stage: 'contacts_failed',
         p_status: 'enriching_contacts',
       })
-      await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
+      const { error: failStageErr } = await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
         p_team_id: team.team_id,
         p_stage: 'contacts_failed',
       })
+      if (failStageErr) console.error(`[run-contacts] fail-stage update error for ${team.team_name}: ${failStageErr.message}`)
     }
   }
 
@@ -290,5 +326,5 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  return Response.json({ data: { batch_id, processed: qualifiedTeams.length, agents_written: totalAgentsWritten } })
+  return Response.json({ data: { batch_id, processed: qualifiedTeams.length, agents_written: totalAgentsWritten, has_error: hasError, errors: debugErrors } })
 }
