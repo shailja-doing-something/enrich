@@ -46,10 +46,13 @@ export async function DELETE(
   }
   const { batch_id } = parsed.data
 
-  const { error } = await supabaseAdmin.rpc('ce_delete_batch', { p_batch_id: batch_id })
+  const { data: wasDeleted, error } = await supabaseAdmin.rpc('ce_delete_batch', { p_batch_id: batch_id })
   if (error) {
     console.error('[delete-batch]', error.message)
     return Response.json({ error: 'Failed to delete batch' }, { status: 500 })
+  }
+  if (!wasDeleted) {
+    return Response.json({ error: 'Batch not found' }, { status: 404 })
   }
 
   return Response.json({ data: { deleted: true } }, {

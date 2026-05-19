@@ -1,5 +1,15 @@
 # Release Notes
 
+## [0.9.3] — 2026-05-19 — Harden deletion, fix progress counter accuracy
+
+### Fixed
+- `app/api/company-enrichment/jobs/[batch_id]/route.ts` DELETE — added 404 guard: checks `ce_delete_batch` return value (now boolean); returns 404 if batch not found rather than silently succeeding
+- `supabase/migrations/20260519240000_ce_delete_batch.sql` — changed return type from `void` to `boolean`; added existence check before any DELETE; all four DELETE statements remain scoped to `WHERE batch_id = p_batch_id`; added DROP before CREATE since return type changed
+- `supabase/migrations/20260519210000_ce_count_enriched_teams.sql` — count now restricted to `pipeline_stage IN ('verified','contacts_done')` and `(status='complete' OR status='done')`; previously counted all teams in complete batches regardless of whether they cleared enrichment stages
+- `supabase/migrations/20260519220000_ce_get_batch_detail.sql` — `website_found` now `COUNT(*) FILTER (WHERE website_url IS NOT NULL)` instead of pipeline_stage inference; `zillow_found` now `COUNT(*) FILTER (WHERE zillow_url IS NOT NULL)`; these are column-truth counts, not stage-inference counts
+
+---
+
 ## [0.9.2] — 2026-05-19 — Pipeline stage tracking + Zillow lookup
 
 ### Fixed
