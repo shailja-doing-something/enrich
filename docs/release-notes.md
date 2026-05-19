@@ -1,5 +1,19 @@
 # Release Notes
 
+## [0.9.5] — 2026-05-19 — Fix contact enrichment for zillow-valid teams
+
+### Fixed
+- `app/api/company-enrichment/run-contacts/route.ts` — `python3` not in PATH on Railway was causing `spawn python3 ENOENT` to propagate uncaught through `runZillowScraper`/`runWebScraper`/`runMerge`/`runClean`, setting `hasError=true` and marking zillow-valid teams as failed; wrapped every `runScript` call in try/catch so script failures return `null` (no data) rather than throwing
+- Same file — `contact_failed` stage name typo (no trailing `s`) corrected to `contacts_failed` so failing teams are counted in `ce_get_batch_detail` counters and `website_processed`
+- Same file — added 0-row short-circuit: after merge, reads merged CSV row count; if 0, returns `[]` without calling `runClean` (avoids `openpyxl` dependency for empty results)
+- `supabase/migrations/20260519250000_ce_get_team_stages.sql` — new `ce_get_team_stages(batch_id)` SECURITY DEFINER RPC returning per-team pipeline_stage, zillow_valid, web_valid for diagnostics
+- `app/api/company-enrichment/jobs/[batch_id]/team-stages/route.ts` — new GET endpoint exposing `ce_get_team_stages` for direct team stage inspection
+
+### Result
+All 10 teams now fully accounted for: `contacts_done=2` (zillow-valid), `contact_skipped=8` (no web or zillow match), `website_processed=10`
+
+---
+
 ## [0.9.4] — 2026-05-19 — Live Zillow API lookup with DB fallback
 
 ### Added
