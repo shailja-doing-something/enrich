@@ -5,6 +5,12 @@
 ### Pipeline re-enable: keep `approval_status` writes when restoring `status: 'generating'`
 When the pipeline was stripped in 0.6.0, `approval_status`/`approved_at` writes were added and `status: 'generating'` was removed. On restore, both sets of writes must coexist in the same `updateJob` call — the approval columns are kept for auditability and the APPROVED fallback UI. Do not remove approval writes just because the pipeline is running again.
 
+### Fire-and-forget `.catch()` silently swallows HTTP errors
+`fetch(...).catch(err => ...)` only catches network-level failures (DNS, refused connection). An HTTP 4xx/5xx response from the Edge Function resolves the promise successfully — `.catch()` never fires. The job sits stuck at `generating` with no error in the DB. Fix: chain `.then(async r => { if (!r.ok) { ... await updateJob(failed) } }).catch(async err => { ... await updateJob(failed) })` so both error classes are handled.
+
+### Edge Function timeout leaves job stuck unless `Promise.race` guards the logic
+Supabase kills Edge Functions at 150s. If the function logic runs past that, the internal `catch` block never executes — the job stays at `generating` forever. Fix: extract logic into `mainLogic()` and race against a 120s `setTimeout`-based rejection. The race's `catch` always runs before the external kill, writing `status: 'failed'` to the DB.
+
 ### Fello exclusion uses word-boundary regex, not `.includes()`
 `/\bfello\b/i` prevents "Fellowstone", "Fellow Agent", etc. from being excluded as Fello employees. The domain check (`domain.includes('fello')`) is intentionally kept broad since email domains are more controlled.
 

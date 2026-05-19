@@ -1,5 +1,13 @@
 # Release Notes
 
+## [0.8.1] — 2026-05-19 — Fix silent error swallowing in Edge Function trigger
+
+### Fixed
+- `app/api/enrich/save-and-run/route.ts` — replaced fire-and-forget `.catch()` with `.then(async r => { if (!r.ok) { await updateJob(failed) } }).catch(async err => { await updateJob(failed) })` so HTTP 4xx/5xx from the Edge Function are caught and written to `error_log`; added null guard for `job.raw_csv` — returns 400 and sets `status: 'failed'` if CSV was not stored on upload
+- `supabase/functions/generate-enrich-rows/index.ts` — extracted CSV/insert logic into `mainLogic()` and wrapped with `Promise.race` against a 120s timeout; catch block writes `status: 'failed'` before Supabase's 150s hard kill, ensuring the job never stays stuck at `generating`
+
+---
+
 ## [0.8.0] — 2026-05-19 — Restore full enrichment pipeline
 
 ### Changed

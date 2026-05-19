@@ -69,6 +69,14 @@ export async function POST(request: NextRequest) {
     status: 'generating',
   })
 
+  if (!job.raw_csv) {
+    await updateJob(jobId, {
+      status: 'failed',
+      error_log: 'raw_csv is null — CSV was not stored correctly on upload',
+    })
+    return Response.json({ error: 'raw_csv missing' }, { status: 400 })
+  }
+
   // Fire generate-enrich-rows Edge Function fire-and-forget
   const edgeUrl = `${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-enrich-rows`
   fetch(edgeUrl, {
@@ -83,7 +91,24 @@ export async function POST(request: NextRequest) {
       hsTicketUrl: job.hs_ticket_url,
       rawCsv: job.raw_csv,
     }),
-  }).catch(err => console.error('generate-enrich-rows trigger failed:', err))
+  })
+    .then(async r => {
+      if (!r.ok) {
+        const body = await r.text().catch(() => '')
+        console.error(`generate-enrich-rows returned ${r.status}: ${body}`)
+        await updateJob(jobId, {
+          status: 'failed',
+          error_log: `Edge Function error ${r.status}: ${body.slice(0, 200)}`,
+        })
+      }
+    })
+    .catch(async err => {
+      console.error('generate-enrich-rows trigger failed:', err)
+      await updateJob(jobId, {
+        status: 'failed',
+        error_log: `Edge Function unreachable: ${String(err).slice(0, 200)}`,
+      })
+    })
 
   return Response.json({ jobId, status: 'generating' })
 }

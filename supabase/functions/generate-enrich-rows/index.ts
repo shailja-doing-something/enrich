@@ -88,62 +88,62 @@ serve(async (req) => {
     )
   }
 
-  // Parse CSV manually — no papaparse in Deno edge runtime
-  const lines = rawCsv.split('\n').filter(l => l.trim() !== '')
-  if (lines.length < 2) {
-    await supabase
-      .from('enrich_jobs')
-      .update({ status: 'failed', error_log: 'CSV has no data rows' })
-      .eq('id', jobId)
-    return new Response(
-      JSON.stringify({ error: 'CSV has no data rows' }),
-      { status: 400, headers: { 'Content-Type': 'application/json' } }
-    )
-  }
-
-  const parseCSVLine = (line: string): string[] => {
-    const result: string[] = []
-    let current = ''
-    let inQuotes = false
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i]
-      if (char === '"') {
-        inQuotes = !inQuotes
-      } else if (char === ',' && !inQuotes) {
-        result.push(current.trim())
-        current = ''
-      } else {
-        current += char
-      }
+  async function mainLogic(): Promise<Response> {
+    // Parse CSV manually — no papaparse in Deno edge runtime
+    const lines = rawCsv.split('\n').filter(l => l.trim() !== '')
+    if (lines.length < 2) {
+      await supabase
+        .from('enrich_jobs')
+        .update({ status: 'failed', error_log: 'CSV has no data rows' })
+        .eq('id', jobId)
+      return new Response(
+        JSON.stringify({ error: 'CSV has no data rows' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      )
     }
-    result.push(current.trim())
-    return result
-  }
 
-  const headers = parseCSVLine(lines[0])
-  const dataLines = lines.slice(1)
+    const parseCSVLine = (line: string): string[] => {
+      const result: string[] = []
+      let current = ''
+      let inQuotes = false
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i]
+        if (char === '"') {
+          inQuotes = !inQuotes
+        } else if (char === ',' && !inQuotes) {
+          result.push(current.trim())
+          current = ''
+        } else {
+          current += char
+        }
+      }
+      result.push(current.trim())
+      return result
+    }
 
-  const insertRows = []
-  for (let i = 0; i < dataLines.length; i++) {
-    const values = parseCSVLine(dataLines[i])
-    if (values.length === 0 || (values.length === 1 && values[0] === '')) continue
+    const headers = parseCSVLine(lines[0])
+    const dataLines = lines.slice(1)
 
-    const rawRow: Record<string, string> = {}
-    headers.forEach((h, idx) => {
-      rawRow[h] = values[idx] ?? ''
-    })
+    const insertRows = []
+    for (let i = 0; i < dataLines.length; i++) {
+      const values = parseCSVLine(dataLines[i])
+      if (values.length === 0 || (values.length === 1 && values[0] === '')) continue
 
-    insertRows.push({
-      job_id: jobId,
-      row_index: i,
-      hs_ticket_url: hsTicketUrl,
-      raw_data: rawRow,
-      formatted_input: mapRowToGeneric(rawRow, columnMapping, hsTicketUrl),
-    })
-  }
+      const rawRow: Record<string, string> = {}
+      headers.forEach((h, idx) => {
+        rawRow[h] = values[idx] ?? ''
+      })
 
-  const BATCH_SIZE = 50
-  try {
+      insertRows.push({
+        job_id: jobId,
+        row_index: i,
+        hs_ticket_url: hsTicketUrl,
+        raw_data: rawRow,
+        formatted_input: mapRowToGeneric(rawRow, columnMapping, hsTicketUrl),
+      })
+    }
+
+    const BATCH_SIZE = 50
     for (let i = 0; i < insertRows.length; i += BATCH_SIZE) {
       const batch = insertRows.slice(i, i + BATCH_SIZE)
       const { error } = await supabase.from('enrich_rows').insert(batch)
@@ -172,17 +172,25 @@ serve(async (req) => {
       JSON.stringify({ success: true, rowCount: insertRows.length }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     )
-  } catch (e) {
+  }
+
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('Function timed out after 120s')), 120_000)
+  )
+
+  try {
+    return await Promise.race([mainLogic(), timeoutPromise])
+  } catch (err) {
+    console.error('generate-enrich-rows failed or timed out:', err)
     await supabase
       .from('enrich_jobs')
       .update({
         status: 'failed',
-        error_log: e instanceof Error ? e.message : 'Unknown error during row generation',
+        error_log: String(err).slice(0, 200),
       })
       .eq('id', jobId)
-
     return new Response(
-      JSON.stringify({ error: e instanceof Error ? e.message : 'Row generation failed' }),
+      JSON.stringify({ error: String(err) }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     )
   }
