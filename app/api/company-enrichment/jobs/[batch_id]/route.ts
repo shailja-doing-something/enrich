@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic'
 
 const paramsSchema = z.object({ batch_id: z.string().uuid() })
 
+
 type ContactStage = 'pending' | 'running' | 'done' | 'failed'
 
 function deriveContactStage(currentStage: string | null): ContactStage {
@@ -53,5 +54,26 @@ export async function GET(
     },
   }, {
     headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
+  })
+}
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { batch_id: string } }
+) {
+  const parsed = paramsSchema.safeParse(params)
+  if (!parsed.success) {
+    return Response.json({ error: 'Invalid batch_id' }, { status: 400 })
+  }
+  const { batch_id } = parsed.data
+
+  const { error } = await supabaseAdmin.rpc('ce_delete_batch', { p_batch_id: batch_id })
+  if (error) {
+    console.error('[delete-batch]', error.message)
+    return Response.json({ error: 'Failed to delete batch' }, { status: 500 })
+  }
+
+  return Response.json({ data: { deleted: true } }, {
+    headers: { 'Cache-Control': 'no-store' },
   })
 }

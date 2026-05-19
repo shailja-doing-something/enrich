@@ -94,6 +94,8 @@ export default function DashboardPage() {
   const [expandedBatchId, setExpandedBatchId] = useState<string | null>(null)
   const [contactsByBatch, setContactsByBatch] = useState<Record<string, ContactRow[]>>({})
   const [teamsEnriched, setTeamsEnriched] = useState<number | null>(null)
+  const [deletingBatchIds, setDeletingBatchIds] = useState<Set<string>>(new Set())
+  const deletingBatchIdsRef = useRef<Set<string>>(new Set())
 
   const addDeleting = (id: string) => {
     deletingIdsRef.current.add(id)
@@ -130,6 +132,35 @@ export default function DashboardPage() {
 
   const downloadContactsCsv = (batchId: string) => {
     window.location.href = `/api/company-enrichment/export-contacts/${batchId}`
+  }
+
+  const handleBatchDelete = async (batchId: string, isComplete: boolean) => {
+    const confirmed = window.confirm('Delete this batch and all its teams? This cannot be undone.')
+    if (!confirmed) return
+
+    setCeBatches(prev => prev.filter(b => b.batch_id !== batchId))
+    deletingBatchIdsRef.current.add(batchId)
+    setDeletingBatchIds(new Set(deletingBatchIdsRef.current))
+
+    try {
+      const res = await fetch(`/api/company-enrichment/jobs/${batchId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json: unknown = await res.json().catch(() => ({}))
+        const msg = (typeof json === 'object' && json !== null && 'error' in json)
+          ? String((json as Record<string, unknown>).error)
+          : 'Delete failed. Please try again.'
+        alert(msg)
+        await fetchBatches()
+      } else if (isComplete) {
+        await fetchTeamsEnriched()
+      }
+    } catch {
+      alert('Network error. Please try again.')
+      await fetchBatches()
+    } finally {
+      deletingBatchIdsRef.current.delete(batchId)
+      setDeletingBatchIds(new Set(deletingBatchIdsRef.current))
+    }
   }
 
   const fetchTeamsEnriched = async () => {
@@ -548,6 +579,13 @@ export default function DashboardPage() {
                       </a>
                     </>
                   )}
+                  <button
+                    onClick={() => handleBatchDelete(batch.batch_id, batch.status === 'complete')}
+                    disabled={deletingBatchIds.has(batch.batch_id)}
+                    className="text-red-500 hover:underline text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {deletingBatchIds.has(batch.batch_id) ? 'Deleting…' : 'Delete'}
+                  </button>
                 </div>
               </div>
 
