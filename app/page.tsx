@@ -415,7 +415,7 @@ export default function DashboardPage() {
 
       <hr className="my-10 border-gray-200" />
 
-      <h2 className="text-xl font-semibold mb-6">Company Enrichment</h2>
+      <h2 className="text-xl font-semibold mb-6">Team Enrichment</h2>
 
       <form onSubmit={handleCeSubmit} className="mb-10">
         <label className="block text-sm font-medium text-gray-700 mb-1">
