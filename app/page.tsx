@@ -93,6 +93,7 @@ export default function DashboardPage() {
   const [ceBatches, setCeBatches] = useState<CompanyBatch[]>([])
   const [expandedBatchId, setExpandedBatchId] = useState<string | null>(null)
   const [contactsByBatch, setContactsByBatch] = useState<Record<string, ContactRow[]>>({})
+  const [teamsEnriched, setTeamsEnriched] = useState<number | null>(null)
 
   const addDeleting = (id: string) => {
     deletingIdsRef.current.add(id)
@@ -129,6 +130,20 @@ export default function DashboardPage() {
 
   const downloadContactsCsv = (batchId: string) => {
     window.location.href = `/api/company-enrichment/export-contacts/${batchId}`
+  }
+
+  const fetchTeamsEnriched = async () => {
+    try {
+      const res = await fetch(`/api/company-enrichment/teams-enriched?t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+      })
+      if (!res.ok) return
+      const json = await res.json()
+      setTeamsEnriched(json.data?.count ?? 0)
+    } catch {
+      // silent
+    }
   }
 
   const fetchBatches = async () => {
@@ -206,6 +221,23 @@ export default function DashboardPage() {
     }
   }, [])
 
+  useEffect(() => {
+    let isMounted = true
+    let timeoutId: NodeJS.Timeout
+
+    const poll = async () => {
+      await fetchTeamsEnriched()
+      if (isMounted) timeoutId = setTimeout(poll, 30_000)
+    }
+
+    poll()
+
+    return () => {
+      isMounted = false
+      clearTimeout(timeoutId)
+    }
+  }, [])
+
   async function handleCeSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!ceFile) {
@@ -234,6 +266,7 @@ export default function DashboardPage() {
       }
       setCeFile(null)
       await fetchBatches()
+      await fetchTeamsEnriched()
     } catch {
       setCeError('Network error — could not reach the server')
     } finally {
@@ -415,7 +448,35 @@ export default function DashboardPage() {
 
       <hr className="my-10 border-gray-200" />
 
-      <h2 className="text-xl font-semibold mb-6">Team Enrichment</h2>
+      <h2 className="text-xl font-semibold mb-4">Enrichment Q2</h2>
+
+      {teamsEnriched !== null && (() => {
+        const TARGET = 20_000
+        const count = teamsEnriched
+        const pct = Math.min(count / TARGET, 1)
+        const pctDisplay = (pct * 100).toFixed(1)
+        const reached = count >= TARGET
+        return (
+          <div className="mb-6">
+            <div className="flex items-center justify-between text-sm mb-1">
+              {reached ? (
+                <span className="font-medium text-green-700">20,000+ target reached 🎉</span>
+              ) : (
+                <span className="text-gray-600">
+                  {count.toLocaleString()} / 20,000+ teams enriched
+                </span>
+              )}
+              {!reached && <span className="text-gray-400">{pctDisplay}%</span>}
+            </div>
+            <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+              <div
+                className={`h-2.5 rounded-full transition-all ${reached ? 'bg-green-600' : 'bg-blue-500'}`}
+                style={{ width: reached ? '100%' : `${pct * 100}%` }}
+              />
+            </div>
+          </div>
+        )
+      })()}
 
       <form onSubmit={handleCeSubmit} className="mb-10">
         <label className="block text-sm font-medium text-gray-700 mb-1">

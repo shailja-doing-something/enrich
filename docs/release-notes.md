@@ -1,5 +1,17 @@
 # Release Notes
 
+## [0.9.1] — 2026-05-19 — Enrichment Q2 progress tracker
+
+### Added
+- `app/api/company-enrichment/teams-enriched/route.ts` — GET: returns total teams enriched count via `ce_count_enriched_teams()` RPC (staging.teams JOIN staging.batches WHERE status='complete')
+- `supabase/migrations/20260519210000_ce_count_enriched_teams.sql` — `ce_count_enriched_teams()` SECURITY DEFINER function
+- `app/page.tsx` — progress bar tracker below "Enrichment Q2" heading: shows `X / 20,000+ teams enriched (X.X%)`, polls every 30s, re-fetches after successful upload; shows "20,000+ target reached 🎉" with full bar when count ≥ 20,000
+
+### Changed
+- `app/page.tsx` — renamed section heading from "Team Enrichment" to "Enrichment Q2"
+
+---
+
 ## [0.9.0] — 2026-05-19 — Contact enrichment pipeline
 
 ### Added
