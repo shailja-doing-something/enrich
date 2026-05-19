@@ -9,6 +9,7 @@ const bodySchema = z.object({ batch_id: z.string().uuid() })
 
 type TeamRow = {
   team_id: string
+  team_name: string | null
   website_url: string | null
 }
 
@@ -41,7 +42,7 @@ function callVerifyUrl(websiteUrl: string): Promise<VerifyResult> {
     proc.on('close', (code) => {
       clearTimeout(timer)
       if (code !== 0) {
-        console.error(`verify_urls.py exited ${code}: ${stderr.trim()}`)
+        console.error(`[verify-urls] script exited ${code}: ${stderr.trim()}`)
         resolve({ valid: false, error: stderr.trim() || 'non-zero exit' })
         return
       }
@@ -55,7 +56,7 @@ function callVerifyUrl(websiteUrl: string): Promise<VerifyResult> {
 
     proc.on('error', (err) => {
       clearTimeout(timer)
-      console.error('verify_urls.py spawn error:', err.message)
+      console.error(`[verify-urls] spawn error: ${err.message}`)
       resolve({ valid: false, error: err.message })
     })
   })
@@ -77,31 +78,55 @@ export async function POST(request: NextRequest) {
     p_batch_id: batch_id,
   })
   if (teamsErr) {
-    console.error(teamsErr.message)
+    console.error('[verify-urls] fetch teams:', teamsErr.message)
     return Response.json({ error: 'Failed to fetch teams' }, { status: 500 })
   }
 
-  await supabaseAdmin.rpc('ce_update_batch_status', {
+  await supabaseAdmin.rpc('ce_update_batch_pipeline', {
     p_batch_id: batch_id,
+    p_stage: 'verifying_urls',
     p_status: 'verifying_urls',
   })
 
   const teamRows = (teams ?? []) as TeamRow[]
   let verifiedCount = 0
+
   for (const team of teamRows) {
-    if (!team.website_url) continue
+    if (!team.website_url) {
+      // No URL to verify — still advance to verified stage so qa_processed count is accurate
+      console.log(`[verify-urls] ${team.team_name}: no website, skipping verify`)
+      await supabaseAdmin.rpc('ce_update_team_web_valid', {
+        p_team_id: team.team_id,
+        p_web_valid: false,
+        p_verify_error: 'no website found',
+      })
+      await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
+        p_team_id: team.team_id,
+        p_stage: 'verified',
+      })
+      continue
+    }
+
     const result = await callVerifyUrl(team.website_url)
+    console.log(`[verify-urls] ${team.team_name} (${team.website_url}): valid=${result.valid}${result.error ? ` err=${result.error}` : ''}`)
+
     const { error } = await supabaseAdmin.rpc('ce_update_team_web_valid', {
       p_team_id: team.team_id,
       p_web_valid: result.valid,
       p_verify_error: result.error ?? null,
     })
-    if (error) console.error(`update web_valid for ${team.team_id}: ${error.message}`)
+    if (error) console.error(`[verify-urls] update web_valid for ${team.team_name}: ${error.message}`)
     else if (result.valid) verifiedCount++
+
+    await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
+      p_team_id: team.team_id,
+      p_stage: 'verified',
+    })
   }
 
-  await supabaseAdmin.rpc('ce_update_batch_status', {
+  await supabaseAdmin.rpc('ce_update_batch_pipeline', {
     p_batch_id: batch_id,
+    p_stage: 'verify_complete',
     p_status: 'complete',
   })
 
@@ -111,7 +136,7 @@ export async function POST(request: NextRequest) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ batch_id }),
-  }).catch((err: Error) => console.error('run-contacts trigger failed:', err.message))
+  }).catch((err: Error) => console.error('[verify-urls] run-contacts trigger failed:', err.message))
 
   return Response.json({ data: { batch_id, verified_count: verifiedCount } })
 }

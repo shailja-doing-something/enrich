@@ -42,22 +42,28 @@ function callFindWebsite(team: TeamRow): Promise<string> {
 
     proc.on('close', (code) => {
       clearTimeout(timer)
+      if (stderr.trim()) {
+        console.error(`[find-website] ${team.team_name} stderr: ${stderr.trim()}`)
+      }
       if (code !== 0) {
-        console.error(`find_website.py exited ${code}: ${stderr.trim()}`)
+        console.error(`[find-website] ${team.team_name}: script exited ${code}`)
         resolve('')
         return
       }
       try {
         const result = JSON.parse(stdout.trim()) as { website?: string }
-        resolve(result.website ?? '')
+        const website = result.website ?? ''
+        console.log(`[find-website] ${team.team_name}: ${website || 'not found'}`)
+        resolve(website)
       } catch {
+        console.error(`[find-website] ${team.team_name}: invalid script output: ${stdout.trim()}`)
         resolve('')
       }
     })
 
     proc.on('error', (err) => {
       clearTimeout(timer)
-      console.error('find_website.py spawn error:', err.message)
+      console.error(`[find-website] ${team.team_name}: spawn error: ${err.message}`)
       resolve('')
     })
   })
@@ -79,16 +85,19 @@ export async function POST(request: NextRequest) {
     p_batch_id: batch_id,
   })
   if (teamsErr) {
-    console.error(teamsErr.message)
+    console.error('[find-website] fetch teams:', teamsErr.message)
     return Response.json({ error: 'Failed to fetch teams' }, { status: 500 })
   }
 
-  await supabaseAdmin.rpc('ce_update_batch_status', {
+  await supabaseAdmin.rpc('ce_update_batch_pipeline', {
     p_batch_id: batch_id,
+    p_stage: 'finding_websites',
     p_status: 'finding_websites',
   })
 
   const teamRows = (teams ?? []) as TeamRow[]
+
+  // Stage 1: website finder
   for (const team of teamRows) {
     const website = await callFindWebsite(team)
     if (website) {
@@ -96,11 +105,40 @@ export async function POST(request: NextRequest) {
         p_team_id: team.team_id,
         p_website_url: website,
       })
-      if (error) console.error(`update website for ${team.team_id}: ${error.message}`)
+      if (error) console.error(`[find-website] update website for ${team.team_name}: ${error.message}`)
     }
+    await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
+      p_team_id: team.team_id,
+      p_stage: website ? 'website_found' : 'website_not_found',
+    })
   }
 
-  // Zillow stage skipped — zillow_url left null
+  // Stage 2: Zillow profile lookup from staging.zillow_profiles
+  await supabaseAdmin.rpc('ce_update_batch_pipeline', {
+    p_batch_id: batch_id,
+    p_stage: 'zillow_lookup',
+    p_status: 'finding_websites',
+  })
+
+  for (const team of teamRows) {
+    const { data: zillowUrl, error: zErr } = await supabaseAdmin.rpc('ce_find_zillow_url', {
+      p_team_name: team.team_name ?? '',
+    })
+    if (zErr) console.error(`[zillow-lookup] ${team.team_name}: ${zErr.message}`)
+
+    const url = (zillowUrl as string | null) ?? null
+    console.log(`[zillow-lookup] ${team.team_name}: ${url || 'not found'}`)
+
+    await supabaseAdmin.rpc('ce_update_team_zillow', {
+      p_team_id: team.team_id,
+      p_zillow_url: url,
+      p_zillow_valid: !!url,
+    })
+    await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
+      p_team_id: team.team_id,
+      p_stage: url ? 'zillow_found' : 'zillow_not_found',
+    })
+  }
 
   // Fire verify-urls (fire-and-forget)
   const appUrl = env.NEXT_PUBLIC_APP_URL
@@ -108,7 +146,7 @@ export async function POST(request: NextRequest) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ batch_id }),
-  }).catch((err: Error) => console.error('verify-urls trigger failed:', err.message))
+  }).catch((err: Error) => console.error('[find-website] verify-urls trigger failed:', err.message))
 
   return Response.json({ data: { batch_id, processed_count: teamRows.length } })
 }

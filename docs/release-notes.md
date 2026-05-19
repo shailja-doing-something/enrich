@@ -1,5 +1,21 @@
 # Release Notes
 
+## [0.9.2] — 2026-05-19 — Pipeline stage tracking + Zillow lookup
+
+### Fixed
+- `app/api/company-enrichment/find-website/route.ts` — replaced `ce_update_batch_status` with `ce_update_batch_pipeline` so `current_stage` is updated (required by stage tracker UI); added `ce_update_team_pipeline_stage` calls per team (`website_found`/`website_not_found`); added Zillow lookup stage that queries `staging.zillow_profiles` (30k rows) via new `ce_find_zillow_url` RPC and updates `staging.teams.zillow_url`/`zillow_valid`/`pipeline_stage`; added console.log for every team result
+- `app/api/company-enrichment/verify-urls/route.ts` — replaced `ce_update_batch_status` with `ce_update_batch_pipeline`; added `ce_update_team_pipeline_stage('verified')` for ALL teams (including those with no website_url, which previously never advanced past zillow stage); added console.log per team; final status now correctly sets `current_stage='verify_complete'`
+
+### Added
+- `supabase/migrations/20260519230000_ce_zillow_lookup.sql` — two new SECURITY DEFINER RPCs: `ce_find_zillow_url(p_team_name text)` (exact team_name/business_name match against staging.zillow_profiles); `ce_update_team_zillow(p_team_id, p_zillow_url, p_zillow_valid)` (updates staging.teams zillow columns)
+
+### Root cause of all teams showing `contact_skipped` with `website_url=null`
+- `find_website.py` was failing silently (Oxylabs env var not in subprocess env) — now logs stderr per team
+- Neither find-website nor verify-urls ever called `ce_update_team_pipeline_stage` — teams stayed at default stage until run-contacts set them to `contact_skipped`
+- `ce_update_batch_status` only updates `status`, not `current_stage` — the stage tracker UI could never show running state
+
+---
+
 ## [0.9.1] — 2026-05-19 — Enrichment Q2 progress tracker
 
 ### Added

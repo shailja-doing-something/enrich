@@ -49,6 +49,15 @@ When `supabase db push` fails with "Remote migration versions not found in local
 ### Do not import server-side lib files into client components
 `lib/enrichment/columnDetector.ts` imports `@google/generative-ai`. Importing it into a `"use client"` component pulls the Gemini SDK into the browser bundle. For UI-only use of pure logic that lives in a server-side file, inline the logic directly in the component file rather than importing it.
 
+### `ce_update_batch_status` vs `ce_update_batch_pipeline` — always use the latter for pipeline routes
+`ce_update_batch_status` only updates `status`, not `current_stage`. The stage tracker UI reads `current_stage` (returned as `stage` from `ce_get_batch_detail`). Using `ce_update_batch_status` in pipeline routes means the stage tracker never shows running state. Always use `ce_update_batch_pipeline(batch_id, stage, status)` in any route that advances the pipeline.
+
+### Pipeline routes must call `ce_update_team_pipeline_stage` per team — it doesn't happen automatically
+Teams in `staging.teams` start with `pipeline_stage=null`. Nothing advances it automatically. Every route that processes a team must explicitly call `ce_update_team_pipeline_stage` after processing. If skipped, all teams stay at `null` until `ce_skip_unqualified_teams` sets them to `contact_skipped`, masking all earlier pipeline stages.
+
+### Teams without website_url must still advance through verify stage
+Skipping teams with `null website_url` in verify-urls means those teams never get `pipeline_stage='verified'`. The `qa_processed` counter never reaches `total_teams`, so the contact enrichment approval gate never opens. Fix: set `web_valid=false` and `pipeline_stage='verified'` even for teams with no URL.
+
 ### Classification and report are computed at confirm time, not at detect time
 `classifyListType` and `buildColumnMappingReport` run in `save-and-run` (confirm route), not in `detectColumnMapping`. This is intentional: the user may adjust the mapping before confirming, so classification must reflect the final confirmed mapping, not Gemini's initial output.
 
