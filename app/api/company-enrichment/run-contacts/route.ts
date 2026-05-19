@@ -187,6 +187,11 @@ async function enrichTeam(
   const mergedPath = await runMerge(teamDir, webCsvPath, zillowCsvPath)
   if (!mergedPath) return []
 
+  // Skip clean (and openpyxl dependency) when there are no rows to process
+  const mergedContent = await fs.readFile(mergedPath, 'utf8')
+  const mergedRowCount = mergedContent.trim().split('\n').length - 1
+  if (mergedRowCount <= 0) return []
+
   const xlsxPath = await runClean(teamDir, mergedPath)
   if (!xlsxPath) return []
 
@@ -266,7 +271,7 @@ export async function POST(request: NextRequest) {
       })
       await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
         p_team_id: team.team_id,
-        p_stage: 'contact_failed',
+        p_stage: 'contacts_failed',
       })
     }
   }
