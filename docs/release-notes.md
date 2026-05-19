@@ -1,5 +1,18 @@
 # Release Notes
 
+## [0.9.4] — 2026-05-19 — Live Zillow API lookup with DB fallback
+
+### Added
+- `app/api/company-enrichment/find-zillow-url/route.ts` — new internal POST route: accepts `{ team_name, location, brokerage }`; calls live Zillow API (`zillow-zip.up.railway.app/api/agents/search?q=...&is_team=true`) with `ZILLOW_ZIP_API_KEY`; scores results with inline fuzzy matching (tokenOverlapRatio + Levenshtein) against both `team_name` and `business_name` fields; adds 0.15 state-match location bonus; returns `{ zillow_url, matched_name, confidence: 'high'|'low' }` above threshold; returns `{ zillow_url: null, reason: 'network_error' }` on timeout/API failure to signal DB fallback
+
+### Changed
+- `app/api/company-enrichment/find-website/route.ts` — Zillow stage now calls `find-zillow-url` internally instead of querying `staging.zillow_profiles` directly; falls back to `ce_find_zillow_url` RPC (DB) only when `reason === 'network_error'` or fetch throws
+
+### Scoring formula
+`nameScore * 0.7 + apiRelevance * 0.3 + locationBonus(0.15)` — LOW_THRESHOLD=0.3, HIGH_THRESHOLD=0.6 (high confidence)
+
+---
+
 ## [0.9.3] — 2026-05-19 — Harden deletion, fix progress counter accuracy
 
 ### Fixed

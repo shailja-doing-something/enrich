@@ -113,7 +113,9 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // Stage 2: Zillow profile lookup from staging.zillow_profiles
+  const appUrl = env.NEXT_PUBLIC_APP_URL
+
+  // Stage 2: Zillow profile lookup via live API (falls back to DB on network error)
   await supabaseAdmin.rpc('ce_update_batch_pipeline', {
     p_batch_id: batch_id,
     p_stage: 'zillow_lookup',
@@ -121,27 +123,60 @@ export async function POST(request: NextRequest) {
   })
 
   for (const team of teamRows) {
-    const { data: zillowUrl, error: zErr } = await supabaseAdmin.rpc('ce_find_zillow_url', {
-      p_team_name: team.team_name ?? '',
-    })
-    if (zErr) console.error(`[zillow-lookup] ${team.team_name}: ${zErr.message}`)
+    let zillowUrl: string | null = null
 
-    const url = (zillowUrl as string | null) ?? null
-    console.log(`[zillow-lookup] ${team.team_name}: ${url || 'not found'}`)
+    try {
+      const resp = await fetch(`${appUrl}/api/company-enrichment/find-zillow-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          team_name: team.team_name ?? '',
+          location: team.location ?? '',
+          brokerage: team.brokerage ?? '',
+        }),
+        signal: AbortSignal.timeout(20_000),
+      })
+      if (resp.ok) {
+        const json = (await resp.json()) as { data: { zillow_url: string | null; reason?: string } }
+        if (json.data.reason === 'network_error') {
+          // Live API unavailable — fall back to DB
+          const { data: dbUrl, error: dbErr } = await supabaseAdmin.rpc('ce_find_zillow_url', {
+            p_team_name: team.team_name ?? '',
+          })
+          if (dbErr) console.error(`[zillow-lookup] DB fallback ${team.team_name}: ${dbErr.message}`)
+          zillowUrl = (dbUrl as string | null) ?? null
+          console.log(`[zillow-lookup] ${team.team_name}: DB fallback → ${zillowUrl || 'not found'}`)
+        } else {
+          zillowUrl = json.data.zillow_url ?? null
+          console.log(`[zillow-lookup] ${team.team_name}: ${zillowUrl || 'not found'}`)
+        }
+      } else {
+        console.error(`[zillow-lookup] ${team.team_name}: find-zillow-url returned ${resp.status}`)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[zillow-lookup] ${team.team_name}: fetch error: ${msg}`)
+      // Network failure — fall back to DB
+      const { data: dbUrl, error: dbErr } = await supabaseAdmin.rpc('ce_find_zillow_url', {
+        p_team_name: team.team_name ?? '',
+      })
+      if (dbErr) console.error(`[zillow-lookup] DB fallback ${team.team_name}: ${dbErr.message}`)
+      zillowUrl = (dbUrl as string | null) ?? null
+      console.log(`[zillow-lookup] ${team.team_name}: DB fallback → ${zillowUrl || 'not found'}`)
+    }
 
     await supabaseAdmin.rpc('ce_update_team_zillow', {
       p_team_id: team.team_id,
-      p_zillow_url: url,
-      p_zillow_valid: !!url,
+      p_zillow_url: zillowUrl,
+      p_zillow_valid: !!zillowUrl,
     })
     await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
       p_team_id: team.team_id,
-      p_stage: url ? 'zillow_found' : 'zillow_not_found',
+      p_stage: zillowUrl ? 'zillow_found' : 'zillow_not_found',
     })
   }
 
   // Fire verify-urls (fire-and-forget)
-  const appUrl = env.NEXT_PUBLIC_APP_URL
   fetch(`${appUrl}/api/company-enrichment/verify-urls`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
