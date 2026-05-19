@@ -62,6 +62,7 @@ export default function JobPage() {
   const jobId = params?.jobId as string
 
   const [job, setJob] = useState<EnrichJob | null>(null)
+  const [allRows, setAllRows] = useState<EnrichRow[]>([])
   const [confirmedLocally, setConfirmedLocally] = useState(false)
   const [approvedLocally, setApprovedLocally] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -70,18 +71,22 @@ export default function JobPage() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [networkError, setNetworkError] = useState(false)
   const [localMapping, setLocalMapping] = useState<ColumnMapping | null>(null)
+  const [showAllRows, setShowAllRows] = useState(false)
+  const [runningLocally, setRunningLocally] = useState(false)
   const [activePill, setActivePill] = useState<string | null>(null)
 
   const mountedRef = useRef(true)
   const failureCountRef = useRef(0)
+  const autoRunFiredRef = useRef(false)
   const confirmedLocallyRef = useRef(false)
   const approvedLocallyRef = useRef(false)
   const localMappingInitRef = useRef(false)
 
-  // Polling — stops on 'failed' or when job is approved
+  // Polling — stops only on terminal status
   useEffect(() => {
     mountedRef.current = true
     let timeoutId: NodeJS.Timeout
+    const TERMINAL = ['complete', 'failed']
 
     const poll = async () => {
       try {
@@ -101,25 +106,74 @@ export default function JobPage() {
             setConfirmedLocally(true)
           }
 
-          // Stop polling once the job is approved — no further steps to track
+          // Note approval status without stopping the poll — pipeline continues past this
           if (data.approval_status === 'approved') {
             approvedLocallyRef.current = true
             setApprovedLocally(true)
-            return
           }
 
-          // Initialize localMapping once from DB
+          // Prevent auto-run firing on jobs already running or complete
+          if (['stage1_running', 'stage2_running', 'both_running', 'branch1_running', 'branch2_running', 'merging', 'complete'].includes(data.status)) {
+            autoRunFiredRef.current = true
+          }
+
+          // Initialize localMapping once
           if (!localMappingInitRef.current && data.column_mapping) {
             localMappingInitRef.current = true
             setLocalMapping(data.column_mapping)
           }
 
-          if (data.status === 'failed') {
+          // Auto-run when rows are ready after user confirmed
+          if (data.status === 'ready' && confirmedLocallyRef.current && !autoRunFiredRef.current) {
+            autoRunFiredRef.current = true
+            fetch('/api/enrich/auto-run', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jobId }),
+            })
+            .then(async r => {
+              if (!r.ok) {
+                const err = await r.json().catch(() => ({}))
+                console.error('[AutoRun] Failed:', err)
+                autoRunFiredRef.current = false
+              } else {
+                console.log('[AutoRun] Fired successfully')
+                if (mountedRef.current) {
+                  setJob(prev => prev ? {
+                    ...prev,
+                    status: 'both_running',
+                    branch1_status: 'running',
+                    branch2_status: 'running',
+                  } : prev)
+                }
+              }
+            })
+            .catch(err => {
+              console.error('[AutoRun] Network error:', err)
+              autoRunFiredRef.current = false
+            })
+          }
+
+          if (data.status === 'complete' && mountedRef.current) {
+            fetch(`/api/enrich/jobs/${jobId}/rows`, { cache: 'no-store' })
+              .then(r => r.json())
+              .then(rowData => {
+                if (mountedRef.current) {
+                  setAllRows(rowData.data ?? rowData ?? [])
+                }
+              })
+              .catch(() => {})
+          }
+
+          if (TERMINAL.includes(data.status)) {
             timeoutId = setTimeout(async () => {
               if (mountedRef.current) {
                 try {
                   const finalRes = await fetch(`/api/enrich/status/${jobId}`, { cache: 'no-store' })
-                  if (finalRes.ok && mountedRef.current) setJob(await finalRes.json())
+                  if (finalRes.ok && mountedRef.current) {
+                    const finalData = await finalRes.json()
+                    setJob(finalData)
+                  }
                 } catch {}
               }
             }, 1000)
@@ -129,7 +183,9 @@ export default function JobPage() {
         }
       } catch {
         failureCountRef.current += 1
-        if (failureCountRef.current >= 5 && mountedRef.current) setNetworkError(true)
+        if (failureCountRef.current >= 5) {
+          if (mountedRef.current) setNetworkError(true)
+        }
         if (mountedRef.current) timeoutId = setTimeout(poll, 5000)
       }
     }
@@ -141,6 +197,18 @@ export default function JobPage() {
       clearTimeout(timeoutId)
     }
   }, [jobId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch rows when job reaches ready or complete
+  useEffect(() => {
+    if (!job) return
+    if (job.status !== 'ready' && job.status !== 'complete' && job.status !== 'merging') return
+    fetch(`/api/enrich/jobs/${jobId}/rows`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(data => {
+        if (mountedRef.current) setAllRows(data.data ?? data ?? [])
+      })
+      .catch(() => {})
+  }, [job?.status, jobId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch preview whenever localMapping changes (STATE B only)
   useEffect(() => {
@@ -166,7 +234,7 @@ export default function JobPage() {
       })
   }, [localMapping, job?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Prevent showing STATE B for already-confirmed jobs on first load
+  // Lock out STATE B on first load if job is already confirmed in DB
   useEffect(() => {
     if (job?.mapping_confirmed) {
       setConfirmedLocally(true)
@@ -174,7 +242,7 @@ export default function JobPage() {
     }
   }, [job?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleApproveAndSubmit = async () => {
+  const handleSaveAndRun = async () => {
     if (saving) return
     setSaving(true)
     setSaveError(null)
@@ -190,15 +258,50 @@ export default function JobPage() {
         setSaving(false)
         return
       }
-      approvedLocallyRef.current = true
-      setApprovedLocally(true)
       confirmedLocallyRef.current = true
       setConfirmedLocally(true)
-      // Do NOT setSaving(false) — we transition to the approved state immediately
+      setJob(prev => prev ? { ...prev, status: 'generating', mapping_confirmed: true } : prev)
+      // do NOT setSaving(false) — polling handles the transition
     } catch {
       setSaveError('Network error. Please try again.')
       setSaving(false)
     }
+  }
+
+  const handleRun = async () => {
+    setRunningLocally(true)
+    try {
+      const res = await fetch(`/api/enrich/run/${jobId}/trigger`, { method: 'POST' })
+      if (!res.ok) {
+        setRunningLocally(false)
+        return
+      }
+      setJob(prev => prev ? { ...prev, status: 'stage1_running' } : prev)
+      fetch(`/api/enrich/run/${jobId}/fire`, { method: 'POST' }).catch(console.error)
+    } catch {
+      setRunningLocally(false)
+    }
+  }
+
+  const downloadCSV = (rows: Record<string, unknown>[], filename: string) => {
+    if (!rows?.length) return
+    const headers = Object.keys(rows[0])
+    const lines = [
+      headers.join(','),
+      ...rows.map(row =>
+        headers.map(h => {
+          const val = String(row[h] ?? '')
+          return val.includes(',') || val.includes('"') ? `"${val.replace(/"/g, '""')}"` : val
+        }).join(',')
+      ),
+    ]
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   // ── RENDER ────────────────────────────────────────────────────────────────────
@@ -223,22 +326,95 @@ export default function JobPage() {
   }
 
   const status = job.status
+  const isConfirmed = job.mapping_confirmed === true || confirmedLocally || confirmedLocallyRef.current
 
-  // APPROVED — clean handoff state, no further steps triggered
-  if (approvedLocally || job.approval_status === 'approved') {
+  // COMPLETE — STATE E
+  if (status === 'complete') {
+    const b1Found = allRows.filter(r => r.branch1_status === 'found')
+    const b2Found = allRows.filter(r => r.branch2_status === 'found')
+    const bothFound = allRows.filter(r => r.branch1_status === 'found' && r.branch2_status === 'found')
+    const neitherFound = allRows.filter(r => r.branch1_status !== 'found' && r.branch2_status !== 'found')
+    const displayRows = showAllRows ? allRows : allRows.slice(0, 10)
+    const cell: React.CSSProperties = { padding: '0.5rem 0.75rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
     return (
       <div style={{ padding: '2rem' }}>
         <a href="/">← Back to dashboard</a>
-        <div style={{ marginTop: '3rem', maxWidth: '480px' }}>
-          <p style={{ fontSize: '20px', fontWeight: 600, color: '#166534' }}>List approved.</p>
-          <p style={{ marginTop: '0.5rem', color: '#374151' }}>Ready for enrichment pipeline.</p>
-          <p style={{ marginTop: '1.5rem', fontSize: '13px', color: '#9ca3af' }}>
-            Job ID:{' '}
-            <code style={{ fontSize: '12px', background: '#f3f4f6', padding: '2px 6px', borderRadius: '4px' }}>
-              {job.id}
-            </code>
-          </p>
+        <h2 style={{ marginTop: '1rem' }}>Enrichment complete</h2>
+
+        <div style={{ display: 'flex', gap: '1rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
+          {[
+            { label: 'Team size found', value: b1Found.length },
+            { label: 'Contact found', value: b2Found.length },
+            { label: 'Both found', value: bothFound.length },
+            { label: 'Neither found', value: neitherFound.length },
+          ].map(({ label, value }) => (
+            <div key={label} style={{ padding: '1rem 1.25rem', border: '1px solid #e5e7eb', borderRadius: '8px', minWidth: '130px' }}>
+              <p style={{ fontSize: '22px', fontWeight: 700 }}>{value}</p>
+              <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '0.25rem' }}>{label}</p>
+            </div>
+          ))}
         </div>
+
+        <div style={{ marginTop: '1.25rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <button onClick={() => downloadCSV(
+            allRows.map(r => (r.merged_data ?? {}) as Record<string, unknown>),
+            `enriched-complete-${jobId}.csv`
+          )}>Download all enriched ({allRows.length} rows)</button>
+          <button onClick={() => downloadCSV(
+            b1Found.map(r => (r.team_size_data ?? {}) as Record<string, unknown>),
+            `enriched-teamsize-${jobId}.csv`
+          )}>Download team size only ({b1Found.length} rows)</button>
+          <button onClick={() => downloadCSV(
+            b2Found.map(r => (r.contact_data ?? {}) as Record<string, unknown>),
+            `enriched-contact-${jobId}.csv`
+          )}>Download contact only ({b2Found.length} rows)</button>
+        </div>
+
+        <div style={{ overflowX: 'auto', marginTop: '1.5rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                {['Name', 'Email', 'Team size', 'Count', 'Brokerage', 'Contact source', 'Zillow rating', 'B1', 'B2'].map(h => (
+                  <th key={h} style={{ textAlign: 'left', padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayRows.map((row, i) => {
+                const m = row.merged_data ?? {}
+                return (
+                  <tr key={i} style={{ borderBottom: '1px solid #f5f5f5' }}>
+                    <td style={cell}>{String(m.name ?? row.formatted_input?.name ?? '—')}</td>
+                    <td style={cell}>{String(m.email ?? row.formatted_input?.email ?? '—')}</td>
+                    <td style={cell}>{String(m.team_size_category ?? '—')}</td>
+                    <td style={cell}>{String(m.team_size_count ?? '—')}</td>
+                    <td style={cell}>{String(m.brokerage_enriched ?? '—')}</td>
+                    <td style={cell}>{String(m.contact_source ?? '—')}</td>
+                    <td style={cell}>{String(m.zillow_rating ?? '—')}</td>
+                    <td style={cell}>
+                      <span style={{ color: row.branch1_status === 'found' ? '#166534' : '#9ca3af' }}>
+                        {row.branch1_status === 'found' ? '✓' : '✗'}
+                      </span>
+                    </td>
+                    <td style={cell}>
+                      <span style={{ color: row.branch2_status === 'found' ? '#166534' : '#9ca3af' }}>
+                        {row.branch2_status === 'found' ? '✓' : '✗'}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        {allRows.length > 10 && (
+          <button
+            onClick={() => setShowAllRows(!showAllRows)}
+            style={{ marginTop: '0.5rem', background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '13px' }}
+          >
+            {showAllRows ? 'Show fewer rows' : `View all ${allRows.length} rows`}
+          </button>
+        )}
       </div>
     )
   }
@@ -259,8 +435,156 @@ export default function JobPage() {
     )
   }
 
+  // PIPELINE RUNNING — STATE D
+  if (['both_running', 'merging', 'stage1_running', 'stage2_running', 'branch1_running', 'branch2_running'].includes(status)) {
+    const b1 = job.branch1_status ?? 'running'
+    const b2 = job.branch2_status ?? 'running'
+    const b1Done = b1 === 'complete'
+    const b2Done = b2 === 'complete'
+    return (
+      <div style={{ padding: '2rem' }}>
+        <a href="/">← Back to dashboard</a>
+        <h2 style={{ marginTop: '1rem' }}>Enrichment running</h2>
+        <p style={{ color: '#6b7280', marginTop: '0.25rem', fontSize: '13px' }}>{job.raw_row_count ?? 0} rows · both branches running in parallel</p>
+        <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ padding: '1.25rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <p style={{ fontWeight: 600, fontSize: '14px' }}>Branch 1 — Team Size Enrichment</p>
+              <span style={{ fontSize: '13px', color: b1Done ? '#166534' : b1 === 'failed' ? '#991b1b' : '#2563eb' }}>
+                {b1Done ? '✓ Complete' : b1 === 'failed' ? '✗ Failed' : '⟳ Running'}
+              </span>
+            </div>
+            <p style={{ marginTop: '0.5rem', fontSize: '13px', color: '#6b7280' }}>
+              {b1Done ? `${job.branch1_found_count ?? 0} ${job.branch1_found_count === 1 ? 'row' : 'rows'} found` : 'Submitting to n8n · polling for results…'}
+            </p>
+          </div>
+          <div style={{ padding: '1.25rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <p style={{ fontWeight: 600, fontSize: '14px' }}>Branch 2 — Contact Enrichment</p>
+              <span style={{ fontSize: '13px', color: b2Done ? '#166534' : b2 === 'failed' ? '#991b1b' : '#2563eb' }}>
+                {b2Done ? '✓ Complete' : b2 === 'failed' ? '✗ Failed' : '⟳ Running'}
+              </span>
+            </div>
+            <p style={{ marginTop: '0.5rem', fontSize: '13px', color: '#6b7280' }}>
+              {b2Done ? `${job.branch2_found_count ?? 0} ${job.branch2_found_count === 1 ? 'row' : 'rows'} found` : 'Zillow ZIP → mad.agents…'}
+            </p>
+          </div>
+        </div>
+        {status === 'merging' && (
+          <p style={{ marginTop: '1.5rem', color: '#6b7280', fontSize: '13px' }}>⟳ Merging results…</p>
+        )}
+      </div>
+    )
+  }
+
+  // READY — user just confirmed: show spinner while auto-run fires
+  if (status === 'ready' && confirmedLocally) {
+    return (
+      <div style={{ padding: '2rem' }}>
+        <a href="/">← Back to dashboard</a>
+        <div style={{ marginTop: '4rem', textAlign: 'center' }}>
+          <p>Preparing enrichment...</p>
+          <p style={{ fontSize: '13px', color: '#888', marginTop: '0.5rem' }}>Starting the pipeline...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // READY — STATE C: user navigated directly — show preview and Run button
+  if (status === 'ready') {
+    const displayRows = showAllRows ? allRows : allRows.slice(0, 5)
+    const sampleRow = allRows[0]?.formatted_input
+    return (
+      <div style={{ padding: '2rem' }}>
+        <a href="/">← Back to dashboard</a>
+        <h2 style={{ color: 'green', marginTop: '1rem' }}>
+          {job.raw_row_count ?? allRows.length} rows formatted successfully
+        </h2>
+        <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <button onClick={() => downloadCSV(
+            allRows.map(r => (r.formatted_input ?? {}) as Record<string, unknown>),
+            `formatted-input-${jobId}.csv`
+          )}>Download formatted CSV</button>
+          <button
+            onClick={handleRun}
+            style={{ background: '#2563eb', color: 'white', padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+          >
+            Run Enrichment
+          </button>
+        </div>
+        <div style={{ marginTop: '1.5rem' }}>
+          <h3>Formatted Input ({job.raw_row_count ?? allRows.length} rows)</h3>
+          {sampleRow && (
+            <div style={{ overflowX: 'auto', marginTop: '0.5rem' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr>
+                    {Object.keys(sampleRow).map(k => (
+                      <th key={k} style={{ textAlign: 'left', padding: '0.5rem', borderBottom: '1px solid #eee', whiteSpace: 'nowrap' }}>{k}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayRows.map((row, i) => (
+                    <tr key={i}>
+                      {Object.values(row.formatted_input ?? {}).map((v, j) => (
+                        <td key={j} style={{ padding: '0.5rem', borderBottom: '1px solid #f5f5f5', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {String(v ?? '—')}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {allRows.length > 5 && (
+            <button
+              onClick={() => setShowAllRows(!showAllRows)}
+              style={{ marginTop: '0.5rem', background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '13px' }}
+            >
+              {showAllRows ? 'Show fewer rows' : `View all ${allRows.length} rows`}
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // GENERATING
+  if (status === 'generating') {
+    return (
+      <div style={{ padding: '2rem' }}>
+        <a href="/">← Back to dashboard</a>
+        <div style={{ marginTop: '4rem', textAlign: 'center' }}>
+          <p>Generating formatted sheet...</p>
+          <p style={{ fontSize: '13px', color: '#888', marginTop: '0.5rem' }}>This usually takes 10–30 seconds</p>
+        </div>
+      </div>
+    )
+  }
+
+  // APPROVED — shown as fallback when pipeline hasn't started (e.g. legacy approved jobs)
+  if (approvedLocally || job.approval_status === 'approved') {
+    return (
+      <div style={{ padding: '2rem' }}>
+        <a href="/">← Back to dashboard</a>
+        <div style={{ marginTop: '3rem', maxWidth: '480px' }}>
+          <p style={{ fontSize: '20px', fontWeight: 600, color: '#166534' }}>List approved.</p>
+          <p style={{ marginTop: '0.5rem', color: '#374151' }}>Ready for enrichment pipeline.</p>
+          <p style={{ marginTop: '1.5rem', fontSize: '13px', color: '#9ca3af' }}>
+            Job ID:{' '}
+            <code style={{ fontSize: '12px', background: '#f3f4f6', padding: '2px 6px', borderRadius: '4px' }}>
+              {job.id}
+            </code>
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   // AWAITING CONFIRMATION — STATE B (mapping review; only if not yet confirmed)
-  if (status === 'awaiting_confirmation' && !confirmedLocally) {
+  if (status === 'awaiting_confirmation' && !isConfirmed) {
     const mapping = localMapping ?? job.column_mapping
 
     if (!mapping) {
@@ -473,7 +797,7 @@ export default function JobPage() {
         {saveError && <p style={{ color: 'red', marginTop: '1rem' }}>{saveError}</p>}
 
         <button
-          onClick={handleApproveAndSubmit}
+          onClick={handleSaveAndRun}
           disabled={saving}
           style={{
             marginTop: '1.5rem', padding: '0.75rem 1.5rem',
@@ -482,8 +806,21 @@ export default function JobPage() {
             cursor: saving ? 'not-allowed' : 'pointer',
           }}
         >
-          {saving ? 'Submitting...' : 'Approve and run enrichment'}
+          {saving ? 'Saving...' : 'Save and run enrichment'}
         </button>
+      </div>
+    )
+  }
+
+  // AWAITING CONFIRMATION but mapping already confirmed in DB — stale status, show generating
+  if (status === 'awaiting_confirmation' && isConfirmed) {
+    return (
+      <div style={{ padding: '2rem' }}>
+        <a href="/">← Back to dashboard</a>
+        <div style={{ marginTop: '4rem', textAlign: 'center' }}>
+          <p>Generating formatted sheet...</p>
+          <p style={{ fontSize: '13px', color: '#888', marginTop: '0.5rem' }}>This usually takes 10–30 seconds</p>
+        </div>
       </div>
     )
   }

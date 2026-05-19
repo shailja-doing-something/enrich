@@ -1,5 +1,19 @@
 # Release Notes
 
+## [0.8.0] — 2026-05-19 — Restore full enrichment pipeline
+
+### Changed
+- `app/api/enrich/save-and-run/route.ts` — re-added `status: 'generating'` to the `updateJob` call; re-added fire-and-forget Edge Function trigger (`generate-enrich-rows`); status check now accepts `awaiting_confirmation` or `ready`; returns `{ jobId, status: 'generating' }`; keeps `approval_status`/`approved_at` writes from 0.6.0
+- `app/api/enrich/auto-run/route.ts` — restored `updateJob` import, `APP_URL` constant, `await updateJob(jobId, { status: 'both_running' })`, and fire-and-forget fetch to `/api/enrich/pipeline`
+- `app/api/enrich/pipeline/route.ts` — restored `prioritizeRows` import, `TypedRow` import, and full QA block (prioritize rows → parallel DB writes of 8 QA fields → filter Excluded/Rejected before branching)
+- `supabase/functions/generate-enrich-rows/index.ts` — removed 5-line disabled comment block; restored `appUrl`/`fetch` auto-run trigger at end of success path
+- `app/jobs/[jobId]/page.tsx` — restored `allRows`, `showAllRows`, `runningLocally` states; `autoRunFiredRef`; rows fetch `useEffect`; auto-run firing in polling with TERMINAL = `['complete', 'failed']`; `handleSaveAndRun`, `handleRun`, `downloadCSV`; STATE C (ready), STATE D (pipeline running), STATE E (complete with stats/download); GENERATING spinner; `awaiting_confirmation + isConfirmed` → generating fallback; button label changed from "Approve and run enrichment" to "Save and run enrichment"; kept all 0.5.0 additions (dynamic badge, click-to-filter priority pills, `buildTierMap`) and 0.6.0 APPROVED fallback state
+
+### Fixed
+- `lib/enrichment/contactPrioritizer.ts` — Fello exclusion now uses word-boundary regex (`/\bfello\b/i`) instead of `.includes('fello')` to avoid false positives on "Fellowstone", "fellow agent", etc.
+
+---
+
 ## [0.7.0] — 2026-05-19 — Company enrichment flow
 
 ### Added

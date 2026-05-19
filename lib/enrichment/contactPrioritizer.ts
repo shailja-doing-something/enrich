@@ -199,7 +199,8 @@ function classifyRow(fields: RowFields, teamNameNormalized: string): Classificat
   const domain = emailDomain(email)
 
   // Step 0 — Fello exclusion (checks raw team name and email domain)
-  if (domain.includes('fello') || teamNameRaw.toLowerCase().includes('fello')) {
+  // Word boundary match prevents "fellow" or "Fellowstone" from triggering exclusion
+  if (domain.includes('fello') || /\bfello\b/i.test(teamNameRaw)) {
     return {
       priority_tier: 'Excluded',
       rejected: true,

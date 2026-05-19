@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { getJob, updateJob } from '@/lib/supabase/jobs'
+import { env } from '@/lib/env'
 import { classifyListType, buildColumnMappingReport } from '@/lib/enrichment/columnDetector'
 import type { ColumnMapping } from '@/lib/supabase/types'
 
@@ -48,15 +49,11 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Job not found' }, { status: 404 })
   }
 
-  if (job.status !== 'awaiting_confirmation') {
+  if (job.status !== 'awaiting_confirmation' && job.status !== 'ready') {
     return Response.json(
-      { error: `Job cannot be approved (current status: ${job.status})` },
+      { error: `Job cannot be started (current status: ${job.status})` },
       { status: 400 }
     )
-  }
-
-  if (job.approval_status === 'approved') {
-    return Response.json({ error: 'Job is already approved' }, { status: 400 })
   }
 
   const listType = listTypeSchema.parse(classifyListType(columnMapping as ColumnMapping))
@@ -69,15 +66,24 @@ export async function POST(request: NextRequest) {
     column_mapping_report: report,
     approval_status: 'approved',
     approved_at: new Date().toISOString(),
-    // Removed — pending new pipeline integration
-    // status: 'generating' was set here to trigger the Edge Function pipeline.
-    // The pipeline now begins in a separate architecture after approval.
+    status: 'generating',
   })
 
-  // Removed — pending new pipeline integration
-  // The generate-enrich-rows Edge Function call was here. It triggered the
-  // full enrichment pipeline (row generation → auto-run → branch1 + branch2 → merge).
-  // That trigger has been removed. See supabase/functions/generate-enrich-rows/index.ts.
+  // Fire generate-enrich-rows Edge Function fire-and-forget
+  const edgeUrl = `${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-enrich-rows`
+  fetch(edgeUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+    body: JSON.stringify({
+      jobId: job.id,
+      columnMapping,
+      hsTicketUrl: job.hs_ticket_url,
+      rawCsv: job.raw_csv,
+    }),
+  }).catch(err => console.error('generate-enrich-rows trigger failed:', err))
 
-  return Response.json({ data: { jobId, approval_status: 'approved' } })
+  return Response.json({ jobId, status: 'generating' })
 }

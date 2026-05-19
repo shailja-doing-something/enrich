@@ -1,8 +1,3 @@
-// Disabled — pending new pipeline integration
-// This Edge Function is no longer triggered by the save-and-run route.
-// It remains here for reference; the trigger in app/api/enrich/save-and-run/route.ts
-// has been removed. Do not redeploy or wire up without reviewing the new architecture.
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -164,14 +159,14 @@ serve(async (req) => {
       })
       .eq('id', jobId)
 
-    // Removed — pending new pipeline integration
-    // The auto-run trigger to /api/enrich/auto-run was here. It kicked off the
-    // enrichment pipeline (Branch 1 team-size + Branch 2 contact) after rows were
-    // written. That trigger is disabled; the pipeline begins in a separate architecture.
-    // const appUrl = Deno.env.get('APP_URL') ?? ''
-    // if (appUrl) {
-    //   fetch(`${appUrl}/api/enrich/auto-run`, { ... })
-    // }
+    const appUrl = Deno.env.get('APP_URL') ?? ''
+    if (appUrl) {
+      fetch(`${appUrl}/api/enrich/auto-run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId }),
+      }).catch((e: Error) => console.error('[generate-enrich-rows] auto-run trigger failed:', e.message))
+    }
 
     return new Response(
       JSON.stringify({ success: true, rowCount: insertRows.length }),

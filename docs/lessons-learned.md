@@ -2,6 +2,12 @@
 
 ## Gotchas
 
+### Pipeline re-enable: keep `approval_status` writes when restoring `status: 'generating'`
+When the pipeline was stripped in 0.6.0, `approval_status`/`approved_at` writes were added and `status: 'generating'` was removed. On restore, both sets of writes must coexist in the same `updateJob` call — the approval columns are kept for auditability and the APPROVED fallback UI. Do not remove approval writes just because the pipeline is running again.
+
+### Fello exclusion uses word-boundary regex, not `.includes()`
+`/\bfello\b/i` prevents "Fellowstone", "Fellow Agent", etc. from being excluded as Fello employees. The domain check (`domain.includes('fello')`) is intentionally kept broad since email domains are more controlled.
+
 ### Accessing an unexposed Supabase schema via RPC
 PostgREST only serves schemas listed in the exposed schemas setting. Calling `.schema('staging')` from the JS client returns `PGRST106` if `staging` is not in that list. Workaround: create `SECURITY DEFINER` functions in the `public` schema that access the staging tables internally. Call them via `supabase.rpc('function_name', ...)`. The function runs with definer privileges on the Postgres server — PostgREST exposure is irrelevant inside the function body. Prefix all such functions (e.g. `ce_*`) to avoid collisions with application functions.
 

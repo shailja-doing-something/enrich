@@ -1,13 +1,12 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import { getJob } from '@/lib/supabase/jobs'
-// Removed — pending new pipeline integration
-// import { updateJob } from '@/lib/supabase/jobs'
-// const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? '...'
+import { getJob, updateJob } from '@/lib/supabase/jobs'
 
 const bodySchema = z.object({
   jobId: z.string().uuid(),
 })
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://enrich-production-1129.up.railway.app'
 
 export async function POST(request: NextRequest) {
   const parsed = bodySchema.safeParse(await request.json())
@@ -26,11 +25,14 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: true }) // already running or done — silently ignore
   }
 
-  // Removed — pending new pipeline integration
-  // The following were removed: status update to 'both_running' and the fire-and-forget
-  // fetch to /api/enrich/pipeline. The pipeline now begins in a separate architecture.
-  // await updateJob(jobId, { status: 'both_running' })
-  // fetch(`${APP_URL}/api/enrich/pipeline`, { ... })
+  await updateJob(jobId, { status: 'both_running' })
+
+  // Fire Railway pipeline route — no timeout issues
+  fetch(`${APP_URL}/api/enrich/pipeline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobId }),
+  }).catch(err => console.error('[AutoRun] Pipeline fire failed:', err))
 
   return Response.json({ ok: true })
 }
