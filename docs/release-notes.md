@@ -1,5 +1,34 @@
 # Release Notes
 
+## [0.9.0] — 2026-05-19 — Contact enrichment pipeline
+
+### Added
+- `app/api/company-enrichment/run-contacts/route.ts` — POST: contact enrichment pipeline per batch; fires automatically from verify-urls fire-and-forget; for each qualified team (web_valid OR zillow_valid) runs SOURCE A (web scraper) and SOURCE B (Zillow scraper) in parallel, then merge + clean; bulk-inserts into staging.agents; marks unqualified teams as `contact_skipped`; cleans up `/tmp/enrich-{batch_id}/` on success
+- `app/api/company-enrichment/jobs/[batch_id]/contacts/route.ts` — GET: returns all staging.agents for a batch grouped by team_name
+- `app/api/company-enrichment/export-contacts/[batch_id]/route.ts` — GET: CSV download of contacts for a batch
+- `scripts/enrichment/web-scraper/discover_team_urls.py` — stub: writes team_priority_urls.json from input CSV (uuid, team_name, url)
+- `scripts/enrichment/web-scraper/orchestrate.py` — stub: calls scrape-urls-combined + extract-team-data Edge Functions, outputs agents.csv
+- `scripts/enrichment/zillow-scraper/zillow_team_scraper.py` — stub: scrapes Zillow team page via Oxylabs, outputs agents_zillow.csv
+- `scripts/enrichment/data-transform/merge_agents.py` — merges --web and --zillow CSVs, deduplicates on email (Zillow wins), outputs agents_merged.csv
+- `scripts/enrichment/data-cleaning/clean_contacts.py` — LLM-based cleaning via ANTHROPIC_API_KEY, outputs agents_merged_contact_cleaned.xlsx
+- `supabase/migrations/20260519200000_contact_enrichment_setup.sql` — 8 new SECURITY DEFINER RPCs: `ce_get_qualified_teams`, `ce_skip_unqualified_teams`, `ce_update_team_pipeline_stage`, `ce_update_batch_pipeline`, `ce_insert_agents_bulk`, `ce_get_batch_agents`, `ce_get_batches_v2`, `ce_get_batch_info`
+- `lib/env.ts` — added `FUNCTION_SECRET` required getter
+- `package.json` — added `xlsx` dependency for XLSX parsing
+
+### Changed
+- `app/api/company-enrichment/verify-urls/route.ts` — fires run-contacts fire-and-forget after setting status to complete
+- `app/api/company-enrichment/jobs/route.ts` — switched from `ce_get_batches` to `ce_get_batches_v2` (returns contacts_count + current_stage)
+- `app/api/company-enrichment/jobs/[batch_id]/route.ts` — now returns `contacts_count` and `contact_stage` ('pending'|'running'|'done'|'failed') derived from batch current_stage
+- `app/page.tsx` — Company Enrichment section: batches now shown as cards; completed batches with contacts show count + "View contacts" toggle (inline agent table) + "Download contacts" CSV link; `BatchStatusBadge` handles `enriching_contacts` stage
+
+### Schema changes (apply in Supabase dashboard — run migration SQL)
+All new functions are CREATE OR REPLACE in the public schema. No new tables needed — uses existing staging.agents.
+
+### Env vars required (add to Railway + .env.local)
+- `FUNCTION_SECRET` — secret passed as `x-function-secret` header to scrape-urls-combined and extract-team-data Edge Functions
+
+---
+
 ## [0.8.1] — 2026-05-19 — Fix silent error swallowing in Edge Function trigger
 
 ### Fixed

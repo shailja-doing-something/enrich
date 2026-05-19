@@ -105,5 +105,13 @@ export async function POST(request: NextRequest) {
     p_status: 'complete',
   })
 
+  // Fire contact enrichment for qualified teams (fire-and-forget)
+  const appUrl = env.NEXT_PUBLIC_APP_URL
+  fetch(`${appUrl}/api/company-enrichment/run-contacts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ batch_id }),
+  }).catch((err: Error) => console.error('run-contacts trigger failed:', err.message))
+
   return Response.json({ data: { batch_id, verified_count: verifiedCount } })
 }

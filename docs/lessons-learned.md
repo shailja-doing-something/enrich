@@ -5,6 +5,15 @@
 ### Pipeline re-enable: keep `approval_status` writes when restoring `status: 'generating'`
 When the pipeline was stripped in 0.6.0, `approval_status`/`approved_at` writes were added and `status: 'generating'` was removed. On restore, both sets of writes must coexist in the same `updateJob` call — the approval columns are kept for auditability and the APPROVED fallback UI. Do not remove approval writes just because the pipeline is running again.
 
+### staging.agents has `designation`, not `job_title`
+The actual column for job title in staging.agents is `designation`, not `job_title`. The spec used "Job Title" as the display name for the cleaned output column, which maps to `designation` in the DB. Always check `supabase gen types typescript --schema staging` before assuming column names on staging tables.
+
+### staging.agents has no `team_name` column — derive via JOIN
+There is no `team_name` column on staging.agents. The team name is stored on staging.teams and linked via the `team_id` FK. The `ce_get_batch_agents` RPC does a JOIN to return team_name. Never try to write team_name directly to staging.agents.
+
+### `supabase gen types typescript --project-id` works without Docker
+When Docker is unavailable, `supabase gen types typescript --project-id <ref> --schema <schema>` still works (uses the Supabase API, not local Docker). This is the fastest way to inspect schema on unexposed staging tables when information_schema is inaccessible via PostgREST.
+
 ### Fire-and-forget `.catch()` silently swallows HTTP errors
 `fetch(...).catch(err => ...)` only catches network-level failures (DNS, refused connection). An HTTP 4xx/5xx response from the Edge Function resolves the promise successfully — `.catch()` never fires. The job sits stuck at `generating` with no error in the DB. Fix: chain `.then(async r => { if (!r.ok) { ... await updateJob(failed) } }).catch(async err => { ... await updateJob(failed) })` so both error classes are handled.
 

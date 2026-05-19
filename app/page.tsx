@@ -10,11 +10,28 @@ type CompanyBatch = {
   created_at: string
   total_rows: number
   status: string
+  current_stage: string | null
+  contacts_count: number
+}
+
+type ContactRow = {
+  agent_id: string
+  team_id: string
+  team_name: string | null
+  first_name: string | null
+  last_name: string | null
+  email: string | null
+  phone: string | null
+  designation: string | null
+  source: string | null
 }
 
 function BatchStatusBadge({ status }: { status: string }) {
   if (status === 'complete') {
     return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-700 text-white">Complete</span>
+  }
+  if (status === 'enriching_contacts') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">Finding contacts</span>
   }
   if (status === 'finding_websites') {
     return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Finding websites</span>
@@ -74,6 +91,8 @@ export default function DashboardPage() {
   const [ceSubmitting, setCeSubmitting] = useState(false)
   const [ceError, setCeError] = useState<string | null>(null)
   const [ceBatches, setCeBatches] = useState<CompanyBatch[]>([])
+  const [expandedBatchId, setExpandedBatchId] = useState<string | null>(null)
+  const [contactsByBatch, setContactsByBatch] = useState<Record<string, ContactRow[]>>({})
 
   const addDeleting = (id: string) => {
     deletingIdsRef.current.add(id)
@@ -86,6 +105,31 @@ export default function DashboardPage() {
   }
 
   const hsTicketValid = hsTicketUrl.startsWith('https://app.hubspot.com/')
+
+  const toggleContacts = async (batchId: string) => {
+    if (expandedBatchId === batchId) {
+      setExpandedBatchId(null)
+      return
+    }
+    setExpandedBatchId(batchId)
+    if (contactsByBatch[batchId]) return
+    try {
+      const res = await fetch(`/api/company-enrichment/jobs/${batchId}/contacts?t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+      })
+      if (!res.ok) return
+      const json = await res.json()
+      const agents = (json.data?.agents ?? []) as ContactRow[]
+      setContactsByBatch(prev => ({ ...prev, [batchId]: agents }))
+    } catch {
+      // silent
+    }
+  }
+
+  const downloadContactsCsv = (batchId: string) => {
+    window.location.href = `/api/company-enrichment/export-contacts/${batchId}`
+  }
 
   const fetchBatches = async () => {
     try {
@@ -405,44 +449,81 @@ export default function DashboardPage() {
       {ceBatches.length === 0 ? (
         <p className="text-sm text-gray-500">No company enrichment batches yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">File</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Rows</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 bg-white">
-              {ceBatches.map((batch) => (
-                <tr key={batch.batch_id}>
-                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                    {new Date(batch.created_at).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600 max-w-xs truncate" title={batch.source_file}>
-                    {batch.source_file}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{batch.total_rows}</td>
-                  <td className="px-4 py-3">
-                    <BatchStatusBadge status={batch.status} />
-                  </td>
-                  <td className="px-4 py-3">
-                    {batch.status === 'complete' && (
-                      <a
-                        href={`/api/company-enrichment/export/${batch.batch_id}`}
+        <div className="space-y-2">
+          {ceBatches.map((batch) => (
+            <div key={batch.batch_id} className="rounded-lg border border-gray-200 overflow-hidden">
+              <div className="flex items-center gap-4 px-4 py-3 bg-white text-sm flex-wrap">
+                <span className="text-gray-400 whitespace-nowrap">
+                  {new Date(batch.created_at).toLocaleString()}
+                </span>
+                <span className="text-gray-600 max-w-xs truncate" title={batch.source_file}>
+                  {batch.source_file}
+                </span>
+                <span className="text-gray-500">{batch.total_rows} rows</span>
+                <BatchStatusBadge status={batch.status} />
+                {batch.status === 'complete' && batch.contacts_count > 0 && (
+                  <span className="text-gray-500">{batch.contacts_count} contacts</span>
+                )}
+                <div className="ml-auto flex items-center gap-3">
+                  <a
+                    href={`/api/company-enrichment/export/${batch.batch_id}`}
+                    className="text-blue-600 hover:underline text-sm"
+                  >
+                    Download CSV
+                  </a>
+                  {batch.status === 'complete' && batch.contacts_count > 0 && (
+                    <>
+                      <button
+                        onClick={() => toggleContacts(batch.batch_id)}
                         className="text-blue-600 hover:underline text-sm"
                       >
-                        Download CSV
+                        {expandedBatchId === batch.batch_id ? 'Hide contacts' : 'View contacts'}
+                      </button>
+                      <a
+                        href={`/api/company-enrichment/export-contacts/${batch.batch_id}`}
+                        className="text-blue-600 hover:underline text-sm"
+                      >
+                        Download contacts
                       </a>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {expandedBatchId === batch.batch_id && (
+                <div className="border-t border-gray-200 overflow-x-auto">
+                  {!contactsByBatch[batch.batch_id] ? (
+                    <p className="px-4 py-3 text-sm text-gray-400">Loading…</p>
+                  ) : contactsByBatch[batch.batch_id].length === 0 ? (
+                    <p className="px-4 py-3 text-sm text-gray-400">No contacts found.</p>
+                  ) : (
+                    <table className="min-w-full divide-y divide-gray-100 text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          {['First Name', 'Last Name', 'Email', 'Phone', 'Job Title', 'Team', 'Source'].map(h => (
+                            <th key={h} className="px-4 py-2 text-left font-medium text-gray-500 whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {contactsByBatch[batch.batch_id].map(c => (
+                          <tr key={c.agent_id}>
+                            <td className="px-4 py-2 text-gray-700">{c.first_name ?? '—'}</td>
+                            <td className="px-4 py-2 text-gray-700">{c.last_name ?? '—'}</td>
+                            <td className="px-4 py-2 text-gray-700">{c.email ?? '—'}</td>
+                            <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{c.phone ?? '—'}</td>
+                            <td className="px-4 py-2 text-gray-700">{c.designation ?? '—'}</td>
+                            <td className="px-4 py-2 text-gray-700">{c.team_name ?? '—'}</td>
+                            <td className="px-4 py-2 text-gray-500">{c.source ?? '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </main>

@@ -23,4 +23,5 @@ export const env = {
   get OXYLABS_USERNAME() { return required('OXYLABS_USERNAME') },
   get OXYLABS_PASSWORD() { return required('OXYLABS_PASSWORD') },
   get ANTHROPIC_API_KEY() { return required('ANTHROPIC_API_KEY') },
+  get FUNCTION_SECRET() { return required('FUNCTION_SECRET') },
 }

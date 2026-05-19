@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase/client'
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const { data, error } = await supabaseAdmin.rpc('ce_get_batches')
+  const { data, error } = await supabaseAdmin.rpc('ce_get_batches_v2')
   if (error) {
     console.error(error.message)
     return Response.json({ error: 'Failed to fetch batches' }, { status: 500 })
