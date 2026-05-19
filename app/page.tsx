@@ -14,16 +14,77 @@ type CompanyBatch = {
   contacts_count: number
 }
 
-type ContactRow = {
-  agent_id: string
-  team_id: string
-  team_name: string | null
-  first_name: string | null
-  last_name: string | null
-  email: string | null
-  phone: string | null
-  designation: string | null
-  source: string | null
+type BatchDetail = {
+  batch_id: string
+  source_file: string
+  stage: string | null
+  status: string
+  created_at: string
+  total_rows: number
+  total_teams: number
+  website_processed: number
+  website_found: number
+  zillow_processed: number
+  zillow_found: number
+  qa_processed: number
+  verified_count: number
+  contacts_processed: number
+  contacts_done: number
+  contact_skipped: number
+  contacts_failed: number
+  web_valid_count: number
+  zillow_valid_count: number
+  agents_count: number
+}
+
+type StageStatus = 'pending' | 'running' | 'complete' | 'failed'
+
+function deriveWebsiteStatus(d: BatchDetail): StageStatus {
+  if (d.total_teams > 0 && d.website_processed === d.total_teams) return 'complete'
+  if (d.website_processed > 0 || d.stage === 'finding_websites') return 'running'
+  return 'pending'
+}
+
+function deriveZillowStatus(d: BatchDetail): StageStatus {
+  if (d.total_teams > 0 && d.zillow_processed === d.total_teams) return 'complete'
+  const wsDone = d.total_teams > 0 && d.website_processed === d.total_teams
+  if (wsDone && (d.zillow_processed > 0 || d.stage === 'zillow_lookup')) return 'running'
+  return 'pending'
+}
+
+function deriveQaStatus(d: BatchDetail): StageStatus {
+  if (d.total_teams > 0 && d.qa_processed === d.total_teams) return 'complete'
+  const zlDone = d.total_teams > 0 && d.zillow_processed === d.total_teams
+  if (zlDone && (d.qa_processed > 0 || d.stage === 'verifying_urls')) return 'running'
+  return 'pending'
+}
+
+function deriveContactsStatus(d: BatchDetail): StageStatus {
+  if (d.stage === 'contacts_done') return 'complete'
+  if (d.stage === 'contacts_failed') return 'failed'
+  if (d.stage === 'contacts_running' || d.stage === 'enriching_contacts') return 'running'
+  return 'pending'
+}
+
+function stageDotClass(s: StageStatus): string {
+  if (s === 'complete') return 'bg-green-500'
+  if (s === 'running') return 'bg-blue-400'
+  if (s === 'failed') return 'bg-red-500'
+  return 'bg-gray-300'
+}
+
+function stageBorderClass(s: StageStatus): string {
+  if (s === 'complete') return 'border-green-200 bg-green-50'
+  if (s === 'running') return 'border-blue-200 bg-blue-50'
+  if (s === 'failed') return 'border-red-200 bg-red-50'
+  return 'border-gray-200 bg-white'
+}
+
+function stageTextClass(s: StageStatus): string {
+  if (s === 'complete') return 'text-green-700'
+  if (s === 'running') return 'text-blue-700'
+  if (s === 'failed') return 'text-red-600'
+  return 'text-gray-400'
 }
 
 function BatchStatusBadge({ status }: { status: string }) {
@@ -92,7 +153,8 @@ export default function DashboardPage() {
   const [ceError, setCeError] = useState<string | null>(null)
   const [ceBatches, setCeBatches] = useState<CompanyBatch[]>([])
   const [expandedBatchId, setExpandedBatchId] = useState<string | null>(null)
-  const [contactsByBatch, setContactsByBatch] = useState<Record<string, ContactRow[]>>({})
+  const [batchDetails, setBatchDetails] = useState<Record<string, BatchDetail>>({})
+  const [startingContactIds, setStartingContactIds] = useState<Set<string>>(new Set())
   const [teamsEnriched, setTeamsEnriched] = useState<number | null>(null)
   const [deletingBatchIds, setDeletingBatchIds] = useState<Set<string>>(new Set())
   const deletingBatchIdsRef = useRef<Set<string>>(new Set())
@@ -109,57 +171,47 @@ export default function DashboardPage() {
 
   const hsTicketValid = hsTicketUrl.startsWith('https://app.hubspot.com/')
 
-  const toggleContacts = async (batchId: string) => {
+  const fetchBatchDetail = (batchId: string) => {
+    fetch(`/api/company-enrichment/jobs/${batchId}?t=${Date.now()}`, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then((json: unknown) => {
+        if (json && typeof json === 'object' && 'data' in json) {
+          const detail = (json as { data: BatchDetail }).data
+          if (detail) setBatchDetails(prev => ({ ...prev, [batchId]: detail }))
+        }
+      })
+      .catch(() => { /* silent */ })
+  }
+
+  const toggleExpand = (batchId: string) => {
     if (expandedBatchId === batchId) {
       setExpandedBatchId(null)
       return
     }
     setExpandedBatchId(batchId)
-    if (contactsByBatch[batchId]) return
-    try {
-      const res = await fetch(`/api/company-enrichment/jobs/${batchId}/contacts?t=${Date.now()}`, {
-        cache: 'no-store',
-        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
-      })
-      if (!res.ok) return
-      const json = await res.json()
-      const agents = (json.data?.agents ?? []) as ContactRow[]
-      setContactsByBatch(prev => ({ ...prev, [batchId]: agents }))
-    } catch {
-      // silent
-    }
+    fetchBatchDetail(batchId)
   }
 
-  const downloadContactsCsv = (batchId: string) => {
-    window.location.href = `/api/company-enrichment/export-contacts/${batchId}`
-  }
-
-  const handleBatchDelete = async (batchId: string, isComplete: boolean) => {
-    const confirmed = window.confirm('Delete this batch and all its teams? This cannot be undone.')
-    if (!confirmed) return
-
-    setCeBatches(prev => prev.filter(b => b.batch_id !== batchId))
-    deletingBatchIdsRef.current.add(batchId)
-    setDeletingBatchIds(new Set(deletingBatchIdsRef.current))
-
+  const handleStartContacts = async (batchId: string) => {
+    setStartingContactIds(prev => { const n = new Set(prev); n.add(batchId); return n })
     try {
-      const res = await fetch(`/api/company-enrichment/jobs/${batchId}`, { method: 'DELETE' })
+      const res = await fetch(`/api/company-enrichment/run-contacts/${batchId}`, { method: 'POST' })
       if (!res.ok) {
         const json: unknown = await res.json().catch(() => ({}))
         const msg = (typeof json === 'object' && json !== null && 'error' in json)
           ? String((json as Record<string, unknown>).error)
-          : 'Delete failed. Please try again.'
+          : 'Failed to start contact enrichment'
         alert(msg)
-        await fetchBatches()
-      } else if (isComplete) {
-        await fetchTeamsEnriched()
+        return
       }
+      fetchBatchDetail(batchId)
     } catch {
       alert('Network error. Please try again.')
-      await fetchBatches()
     } finally {
-      deletingBatchIdsRef.current.delete(batchId)
-      setDeletingBatchIds(new Set(deletingBatchIdsRef.current))
+      setStartingContactIds(prev => { const n = new Set(prev); n.delete(batchId); return n })
     }
   }
 
@@ -197,16 +249,13 @@ export default function DashboardPage() {
       const res = await fetch(`/api/enrich/jobs?t=${Date.now()}`, {
         method: 'GET',
         cache: 'no-store',
-        headers: {
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-        },
+        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
       })
       if (!res.ok) return
       const json = await res.json()
-      const jobs = (json.data ?? json ?? []) as EnrichJob[]
-      jobs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      setJobs(jobs)
+      const fetched = (json.data ?? json ?? []) as EnrichJob[]
+      fetched.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      setJobs(fetched)
     } catch {
       // silent — polling will retry
     }
@@ -222,17 +271,11 @@ export default function DashboardPage() {
         return
       }
       await fetchJobs()
-      if (isMounted) {
-        timeoutId = setTimeout(poll, 3000)
-      }
+      if (isMounted) timeoutId = setTimeout(poll, 3000)
     }
 
     poll()
-
-    return () => {
-      isMounted = false
-      clearTimeout(timeoutId)
-    }
+    return () => { isMounted = false; clearTimeout(timeoutId) }
   }, [])
 
   useEffect(() => {
@@ -245,11 +288,7 @@ export default function DashboardPage() {
     }
 
     poll()
-
-    return () => {
-      isMounted = false
-      clearTimeout(timeoutId)
-    }
+    return () => { isMounted = false; clearTimeout(timeoutId) }
   }, [])
 
   useEffect(() => {
@@ -262,12 +301,40 @@ export default function DashboardPage() {
     }
 
     poll()
-
-    return () => {
-      isMounted = false
-      clearTimeout(timeoutId)
-    }
+    return () => { isMounted = false; clearTimeout(timeoutId) }
   }, [])
+
+  // Detail polling — only fires while a batch is expanded and not terminal
+  useEffect(() => {
+    if (!expandedBatchId) return
+
+    let isMounted = true
+    let timeoutId: NodeJS.Timeout
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/company-enrichment/jobs/${expandedBatchId}?t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+        })
+        if (res.ok) {
+          const json = await res.json()
+          const detail = (json as { data?: BatchDetail }).data
+          if (detail) {
+            setBatchDetails(prev => ({ ...prev, [expandedBatchId]: detail }))
+            if (detail.stage === 'contacts_done' || detail.stage === 'contacts_failed') return
+          }
+        }
+      } catch {
+        // silent
+      }
+      if (isMounted) timeoutId = setTimeout(poll, 5000)
+    }
+
+    // First poll after 5s — toggleExpand already fetches on open
+    timeoutId = setTimeout(poll, 5000)
+    return () => { isMounted = false; clearTimeout(timeoutId) }
+  }, [expandedBatchId])
 
   async function handleCeSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -305,10 +372,39 @@ export default function DashboardPage() {
     }
   }
 
+  const handleBatchDelete = async (batchId: string, isComplete: boolean) => {
+    const confirmed = window.confirm('Delete this batch and all its teams? This cannot be undone.')
+    if (!confirmed) return
+
+    setCeBatches(prev => prev.filter(b => b.batch_id !== batchId))
+    if (expandedBatchId === batchId) setExpandedBatchId(null)
+    setBatchDetails(prev => { const n = { ...prev }; delete n[batchId]; return n })
+    deletingBatchIdsRef.current.add(batchId)
+    setDeletingBatchIds(new Set(deletingBatchIdsRef.current))
+
+    try {
+      const res = await fetch(`/api/company-enrichment/jobs/${batchId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json: unknown = await res.json().catch(() => ({}))
+        const msg = (typeof json === 'object' && json !== null && 'error' in json)
+          ? String((json as Record<string, unknown>).error)
+          : 'Delete failed. Please try again.'
+        alert(msg)
+        await fetchBatches()
+      } else if (isComplete) {
+        await fetchTeamsEnriched()
+      }
+    } catch {
+      alert('Network error. Please try again.')
+      await fetchBatches()
+    } finally {
+      deletingBatchIdsRef.current.delete(batchId)
+      setDeletingBatchIds(new Set(deletingBatchIdsRef.current))
+    }
+  }
+
   const handleDelete = async (jobId: string) => {
-    const confirmed = window.confirm(
-      'Delete this job and all its rows? This cannot be undone.'
-    )
+    const confirmed = window.confirm('Delete this job and all its rows? This cannot be undone.')
     if (!confirmed) return
 
     setJobs(prev => prev.filter(j => j.id !== jobId))
@@ -316,7 +412,6 @@ export default function DashboardPage() {
 
     try {
       const res = await fetch(`/api/enrich/delete/${jobId}`, { method: 'DELETE' })
-
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         alert(err.error || 'Delete failed. Please try again.')
@@ -419,9 +514,7 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        {error && (
-          <p className="mt-2 text-sm text-red-600">{error}</p>
-        )}
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       </form>
 
       {jobs.length === 0 ? (
@@ -449,17 +542,12 @@ export default function DashboardPage() {
                       ? truncate(new URL(job.sheet_url).hostname, 40)
                       : job.sheet_url}
                   </td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {job.raw_row_count ?? '—'}
-                  </td>
+                  <td className="px-4 py-3 text-gray-600">{job.raw_row_count ?? '—'}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={job.status} />
                   </td>
                   <td className="px-4 py-3 flex items-center gap-3">
-                    <a
-                      href={`/jobs/${job.id}`}
-                      className="text-blue-600 hover:underline text-sm"
-                    >
+                    <a href={`/jobs/${job.id}`} className="text-blue-600 hover:underline text-sm">
                       View
                     </a>
                     <button
@@ -493,9 +581,7 @@ export default function DashboardPage() {
               {reached ? (
                 <span className="font-medium text-green-700">20,000+ target reached 🎉</span>
               ) : (
-                <span className="text-gray-600">
-                  {count.toLocaleString()} / 20,000+ teams enriched
-                </span>
+                <span className="text-gray-600">{count.toLocaleString()} / 20,000+ teams enriched</span>
               )}
               {!reached && <span className="text-gray-400">{pctDisplay}%</span>}
             </div>
@@ -542,87 +628,142 @@ export default function DashboardPage() {
         <p className="text-sm text-gray-500">No company enrichment batches yet.</p>
       ) : (
         <div className="space-y-2">
-          {ceBatches.map((batch) => (
-            <div key={batch.batch_id} className="rounded-lg border border-gray-200 overflow-hidden">
-              <div className="flex items-center gap-4 px-4 py-3 bg-white text-sm flex-wrap">
-                <span className="text-gray-400 whitespace-nowrap">
-                  {new Date(batch.created_at).toLocaleString()}
-                </span>
-                <span className="text-gray-600 max-w-xs truncate" title={batch.source_file}>
-                  {batch.source_file}
-                </span>
-                <span className="text-gray-500">{batch.total_rows} rows</span>
-                <BatchStatusBadge status={batch.status} />
-                {batch.status === 'complete' && batch.contacts_count > 0 && (
-                  <span className="text-gray-500">{batch.contacts_count} contacts</span>
-                )}
-                <div className="ml-auto flex items-center gap-3">
-                  <a
-                    href={`/api/company-enrichment/export/${batch.batch_id}`}
-                    className="text-blue-600 hover:underline text-sm"
-                  >
-                    Download CSV
-                  </a>
-                  {batch.status === 'complete' && batch.contacts_count > 0 && (
-                    <>
-                      <button
-                        onClick={() => toggleContacts(batch.batch_id)}
-                        className="text-blue-600 hover:underline text-sm"
-                      >
-                        {expandedBatchId === batch.batch_id ? 'Hide contacts' : 'View contacts'}
-                      </button>
-                      <a
-                        href={`/api/company-enrichment/export-contacts/${batch.batch_id}`}
-                        className="text-blue-600 hover:underline text-sm"
-                      >
-                        Download contacts
-                      </a>
-                    </>
-                  )}
-                  <button
-                    onClick={() => handleBatchDelete(batch.batch_id, batch.status === 'complete')}
-                    disabled={deletingBatchIds.has(batch.batch_id)}
-                    className="text-red-500 hover:underline text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {deletingBatchIds.has(batch.batch_id) ? 'Deleting…' : 'Delete'}
-                  </button>
-                </div>
-              </div>
+          {ceBatches.map((batch) => {
+            const isExpanded = expandedBatchId === batch.batch_id
+            const detail = batchDetails[batch.batch_id]
 
-              {expandedBatchId === batch.batch_id && (
-                <div className="border-t border-gray-200 overflow-x-auto">
-                  {!contactsByBatch[batch.batch_id] ? (
-                    <p className="px-4 py-3 text-sm text-gray-400">Loading…</p>
-                  ) : contactsByBatch[batch.batch_id].length === 0 ? (
-                    <p className="px-4 py-3 text-sm text-gray-400">No contacts found.</p>
-                  ) : (
-                    <table className="min-w-full divide-y divide-gray-100 text-sm">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          {['First Name', 'Last Name', 'Email', 'Phone', 'Job Title', 'Team', 'Source'].map(h => (
-                            <th key={h} className="px-4 py-2 text-left font-medium text-gray-500 whitespace-nowrap">{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100 bg-white">
-                        {contactsByBatch[batch.batch_id].map(c => (
-                          <tr key={c.agent_id}>
-                            <td className="px-4 py-2 text-gray-700">{c.first_name ?? '—'}</td>
-                            <td className="px-4 py-2 text-gray-700">{c.last_name ?? '—'}</td>
-                            <td className="px-4 py-2 text-gray-700">{c.email ?? '—'}</td>
-                            <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{c.phone ?? '—'}</td>
-                            <td className="px-4 py-2 text-gray-700">{c.designation ?? '—'}</td>
-                            <td className="px-4 py-2 text-gray-700">{c.team_name ?? '—'}</td>
-                            <td className="px-4 py-2 text-gray-500">{c.source ?? '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
+            return (
+              <div key={batch.batch_id} className="rounded-lg border border-gray-200 overflow-hidden">
+
+                {/* Header row — click anywhere to expand/collapse */}
+                <div
+                  className="flex items-center gap-3 px-4 py-3 bg-white text-sm cursor-pointer hover:bg-gray-50 select-none flex-wrap"
+                  onClick={() => toggleExpand(batch.batch_id)}
+                >
+                  <span className="text-gray-400 text-xs w-3 flex-shrink-0">
+                    {isExpanded ? '▼' : '▶'}
+                  </span>
+                  <span className="text-gray-400 whitespace-nowrap">
+                    {new Date(batch.created_at).toLocaleString()}
+                  </span>
+                  <span className="text-gray-600 max-w-xs truncate" title={batch.source_file}>
+                    {batch.source_file}
+                  </span>
+                  <span className="text-gray-500">{batch.total_rows} rows</span>
+                  <BatchStatusBadge status={batch.status} />
+
+                  <div
+                    className="ml-auto flex items-center gap-3"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <a
+                      href={`/api/company-enrichment/export/${batch.batch_id}`}
+                      className="text-blue-600 hover:underline text-sm"
+                    >
+                      Download CSV
+                    </a>
+                    <button
+                      onClick={() => handleBatchDelete(batch.batch_id, batch.status === 'complete')}
+                      disabled={deletingBatchIds.has(batch.batch_id)}
+                      className="text-red-500 hover:underline text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {deletingBatchIds.has(batch.batch_id) ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </div>
                 </div>
-              )}
-            </div>
-          ))}
+
+                {/* Expanded detail panel */}
+                {isExpanded && (
+                  <div className="border-t border-gray-100 bg-gray-50 px-5 py-4">
+                    {!detail ? (
+                      <p className="text-sm text-gray-400">Loading…</p>
+                    ) : (() => {
+                      const total = detail.total_teams
+                      const wsStatus = deriveWebsiteStatus(detail)
+                      const zlStatus = deriveZillowStatus(detail)
+                      const qaStatus = deriveQaStatus(detail)
+                      const ctStatus = deriveContactsStatus(detail)
+                      const showGate =
+                        total > 0 &&
+                        detail.qa_processed === total &&
+                        ctStatus === 'pending'
+
+                      const stages = [
+                        { num: 1, name: 'Website Discovery', status: wsStatus, label: `${detail.website_found}/${total} found` },
+                        { num: 2, name: 'Zillow Lookup', status: zlStatus, label: `${detail.zillow_found}/${total} matched` },
+                        { num: 3, name: 'QA Verification', status: qaStatus, label: `${detail.verified_count}/${total} verified` },
+                        {
+                          num: 4, name: 'Contact Enrichment', status: ctStatus,
+                          label: ctStatus === 'complete'
+                            ? `${detail.agents_count} contacts`
+                            : `${detail.contacts_processed}/${total} processed`,
+                        },
+                      ]
+
+                      return (
+                        <>
+                          {/* 4-stage pipeline tracker */}
+                          <div className="flex flex-wrap items-start gap-1 mb-4">
+                            {stages.map((s, i) => (
+                              <div key={s.num} className="flex items-start">
+                                <div className={`rounded-lg border px-3 py-2 text-xs min-w-[132px] ${stageBorderClass(s.status)}`}>
+                                  <div className="flex items-center gap-1.5 mb-0.5">
+                                    <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${stageDotClass(s.status)}`} />
+                                    <span className="font-medium text-gray-700">{s.name}</span>
+                                  </div>
+                                  <div className="text-gray-500 pl-3.5">{s.label}</div>
+                                  <div className={`pl-3.5 mt-0.5 font-medium ${stageTextClass(s.status)}`}>
+                                    {s.status.charAt(0).toUpperCase() + s.status.slice(1)}
+                                  </div>
+                                </div>
+                                {i < 3 && (
+                                  <span className="text-gray-300 text-xs self-center mx-0.5 mt-1">→</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Approval gate: shown when QA is done but contacts not started */}
+                          {showGate && (
+                            <div className="rounded-lg border border-blue-200 bg-white px-4 py-3">
+                              <p className="text-sm font-semibold text-gray-800 mb-1">Company enrichment complete.</p>
+                              <p className="text-sm text-gray-600">{detail.verified_count} teams verified (web or Zillow)</p>
+                              <p className="text-sm text-gray-600">
+                                {total - detail.verified_count} teams failed verification — will be skipped
+                              </p>
+                              <p className="text-sm text-gray-600 mb-3">
+                                Ready to start contact enrichment for {detail.verified_count} teams.
+                              </p>
+                              <button
+                                onClick={() => handleStartContacts(batch.batch_id)}
+                                disabled={startingContactIds.has(batch.batch_id)}
+                                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {startingContactIds.has(batch.batch_id) ? 'Starting…' : 'Start contact enrichment →'}
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Contacts complete */}
+                          {ctStatus === 'complete' && (
+                            <div className="mt-3 flex items-center gap-4">
+                              <span className="text-sm text-gray-600">{detail.agents_count} contacts found</span>
+                              <a
+                                href={`/api/company-enrichment/export-contacts/${batch.batch_id}`}
+                                className="text-sm text-blue-600 hover:underline"
+                              >
+                                Download contacts CSV
+                              </a>
+                            </div>
+                          )}
+                        </>
+                      )
+                    })()}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </main>

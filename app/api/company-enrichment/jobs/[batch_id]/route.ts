@@ -3,18 +3,10 @@ import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/supabase/client'
 
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
+export const fetchCache = 'force-no-store'
 
 const paramsSchema = z.object({ batch_id: z.string().uuid() })
-
-
-type ContactStage = 'pending' | 'running' | 'done' | 'failed'
-
-function deriveContactStage(currentStage: string | null): ContactStage {
-  if (currentStage === 'contacts_running') return 'running'
-  if (currentStage === 'contacts_done') return 'done'
-  if (currentStage === 'contacts_failed') return 'failed'
-  return 'pending'
-}
 
 export async function GET(
   _request: NextRequest,
@@ -26,33 +18,20 @@ export async function GET(
   }
   const { batch_id } = parsed.data
 
-  const { data: teams, error: teamsErr } = await supabaseAdmin.rpc('ce_get_batch_teams', {
+  const { data: rows, error } = await supabaseAdmin.rpc('ce_get_batch_detail', {
     p_batch_id: batch_id,
   })
-  if (teamsErr) {
-    console.error(teamsErr.message)
-    return Response.json({ error: 'Failed to fetch teams' }, { status: 500 })
+  if (error) {
+    console.error('[batch-detail]', error.message)
+    return Response.json({ error: 'Failed to fetch batch detail' }, { status: 500 })
   }
 
-  const { data: batchRows, error: batchErr } = await supabaseAdmin.rpc('ce_get_batch_info', {
-    p_batch_id: batch_id,
-  })
-  if (batchErr) {
-    console.error(batchErr.message)
-    return Response.json({ error: 'Failed to fetch batch info' }, { status: 500 })
+  const row = Array.isArray(rows) ? rows[0] : null
+  if (!row) {
+    return Response.json({ error: 'Batch not found' }, { status: 404 })
   }
 
-  const batchInfo = Array.isArray(batchRows) ? batchRows[0] : null
-  const currentStage = (batchInfo as { current_stage?: string | null } | null)?.current_stage ?? null
-  const contactsCount = (batchInfo as { contacts_count?: number | null } | null)?.contacts_count ?? 0
-
-  return Response.json({
-    data: {
-      teams: teams ?? [],
-      contacts_count: Number(contactsCount),
-      contact_stage: deriveContactStage(currentStage),
-    },
-  }, {
+  return Response.json({ data: row }, {
     headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
   })
 }
