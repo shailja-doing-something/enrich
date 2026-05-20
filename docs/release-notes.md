@@ -1,5 +1,20 @@
 # Release Notes
 
+## [0.9.6] — 2026-05-20 — Port verify-urls to TypeScript, fix export CSV columns, rename button
+
+### Fixed
+- `app/api/company-enrichment/verify-urls/route.ts` — replaced `spawn('python3')` subprocess with native TypeScript `fetch` to Oxylabs Universal Scraper; eliminates `spawn python3 ENOENT` on Railway's Node.js container; `web_valid` and `verify_error` now populate correctly
+- `app/api/company-enrichment/export/[batch_id]/route.ts` — switched to new `ce_export_batch_teams` RPC; adds missing `zillow_url`/`zillow_valid` columns; column order guaranteed: `MAD_ID, team_name, brokerage, location, website_url, web_valid, zillow_url, zillow_valid, verify_error`
+- `app/page.tsx` — renamed "Download CSV" → "Download teams CSV" to distinguish from "Download contacts CSV"
+
+### Added
+- `supabase/migrations/20260520000000_ce_export_batch_teams.sql` — new `ce_export_batch_teams(batch_id)` SECURITY DEFINER RPC returning all export columns from `staging.teams`
+
+### Verified (test batch 32caea10)
+3/3 websites found, 3/3 Zillow matched, 3/3 `web_valid=true`, `verify_error=null` on all teams
+
+---
+
 ## [0.9.5] — 2026-05-19 — Fix contact enrichment for zillow-valid teams
 
 ### Fixed
