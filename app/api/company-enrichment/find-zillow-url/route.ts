@@ -10,6 +10,8 @@ const bodySchema = z.object({
 })
 
 const ACCEPT_THRESHOLD = 50
+const MIN_NAME_SCORE = 40   // gate: brokerage bonus cannot rescue a clearly wrong name
+const ZILLOW_SEARCH_URL = 'https://zillow-zip.up.railway.app/api/agents/search'
 
 const STATE_NAMES: Record<string, string> = {
   'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR',
@@ -27,12 +29,14 @@ const STATE_NAMES: Record<string, string> = {
   'wisconsin': 'WI', 'wyoming': 'WY', 'district of columbia': 'DC',
 }
 
+// 'associates' added — its absence was causing "Nguyen & Associates" to match
+// "Anna & Associates" (shared suffix inflated Levenshtein score to 45/70)
 const NAME_STOP = new Set([
   'team', 'group', 'realty', 'real', 'estate', 'properties', 'property',
-  'homes', 'home', 'llc', 'inc', 'the', 'of', 'at', 'on', 'and',
+  'homes', 'home', 'associates', 'llc', 'inc', 'the', 'of', 'at', 'on', 'and',
 ])
 
-// Used only for hard-reject: fires when BOTH sides are recognized chains and they differ
+// Used only for hard-reject: fires when BOTH sides are recognized chains and differ
 const CHAIN_PATTERNS: Array<readonly [RegExp, string]> = [
   [/keller\s*williams/i, 'kw'],
   [/re\s*\/?\s*max/i, 'remax'],
@@ -66,20 +70,37 @@ export type FindZillowResult = {
   zillow_url: string | null
   match_score: number
   matched_name: string | null
-  rejection_reason?: 'no_state' | 'no_results' | 'below_threshold' | 'chain_mismatch'
+  rejection_reason?: 'no_state' | 'no_results' | 'below_threshold' | 'chain_mismatch' | 'api_timeout'
 }
 
 function parseState(location: string): string | null {
   const tokens = location.trim().replace(/,/g, ' ').split(/\s+/).filter(Boolean)
-  // Last token as 2-letter code
   const last = tokens.at(-1) ?? ''
   if (/^[A-Za-z]{2}$/.test(last)) return last.toUpperCase()
-  // Last 1–3 tokens as full state name
   for (let n = 3; n >= 1; n--) {
     const candidate = tokens.slice(-n).join(' ').toLowerCase()
     if (STATE_NAMES[candidate]) return STATE_NAMES[candidate]
   }
   return null
+}
+
+// Replace " & " with " and " and collapse whitespace — keeps apostrophes and hyphens.
+// Applied to query parameter only; original is used for scoring.
+function sanitizeQuery(name: string): string {
+  return name
+    .replace(/\s*&\s*/g, ' and ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Returns the longest non-stop token — used as last-resort query when full name times out.
+function coreToken(name: string): string {
+  const tokens = name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length >= 3 && !NAME_STOP.has(t))
+  return tokens.sort((a, b) => b.length - a.length)[0] ?? name.split(/\s+/)[0] ?? name
 }
 
 function normalize(s: string): string {
@@ -120,20 +141,75 @@ function extractChain(s: string): string | null {
   return null
 }
 
-async function searchZillow(
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+
+// Single search pass with up to 3 attempts (1s / 3s backoff) on 5xx or network error.
+// Returns { results, timedOut: true } only after all retries are exhausted on 5xx.
+async function attemptSearch(
+  q: string,
+  state: string,
+  apiKey: string,
+  withIsTeam: boolean,
+  passLabel: string
+): Promise<{ results: ZillowResult[]; timedOut: boolean }> {
+  const params = new URLSearchParams({ q, state, full_profile: 'true', limit: '20' })
+  if (withIsTeam) params.set('is_team', 'true')
+  const url = `${ZILLOW_SEARCH_URL}?${params.toString()}`
+  const headers = { 'x-api-key': apiKey }
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt > 1) await sleep(attempt === 2 ? 1000 : 3000)
+    try {
+      const resp = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) })
+      if (resp.ok) {
+        const data = (await resp.json()) as ZillowApiResponse
+        const count = (data.results ?? []).length
+        console.log(`[Zillow]   ${passLabel}: HTTP ${resp.status}, ${count} results`)
+        return { results: data.results ?? [], timedOut: false }
+      }
+      const body = await resp.text().catch(() => '')
+      console.log(
+        `[Zillow]   ${passLabel}: HTTP ${resp.status} (attempt ${attempt}/3)` +
+        (body ? ` — ${body.slice(0, 100)}` : '')
+      )
+      if (resp.status < 500) return { results: [], timedOut: false }  // 4xx won't recover
+      if (attempt === 3) return { results: [], timedOut: true }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.log(`[Zillow]   ${passLabel}: network error (attempt ${attempt}/3) — ${msg.slice(0, 100)}`)
+      if (attempt === 3) return { results: [], timedOut: true }
+    }
+  }
+  return { results: [], timedOut: true }
+}
+
+// Cascade: sanitized name → name+brokerage → core token.
+// Falls through to next pass only on 5xx/timeout; stops on 0 results (legitimate empty).
+async function searchWithFallback(
   teamName: string,
+  brokerage: string,
   state: string,
   apiKey: string,
   withIsTeam: boolean
-): Promise<ZillowResult[]> {
-  const params = new URLSearchParams({ q: teamName, state, full_profile: 'true', limit: '20' })
-  if (withIsTeam) params.set('is_team', 'true')
-  const resp = await fetch(
-    `https://zillow-zip.up.railway.app/api/agents/search?${params.toString()}`,
-    { headers: { 'x-api-key': apiKey }, signal: AbortSignal.timeout(10_000) }
-  )
-  if (!resp.ok) throw new Error(`Zillow API ${resp.status}`)
-  return ((await resp.json()) as ZillowApiResponse).results ?? []
+): Promise<{ results: ZillowResult[]; apiTimeout: boolean }> {
+  const sanitized = sanitizeQuery(teamName)
+  const label = withIsTeam ? '' : ' (no is_team)'
+
+  // Pass 1: sanitized team name
+  const r1 = await attemptSearch(sanitized, state, apiKey, withIsTeam, `Pass 1 (name${label})`)
+  if (!r1.timedOut) return { results: r1.results, apiTimeout: false }
+
+  // Pass 2: sanitized name + brokerage — different query path in API
+  const q2 = brokerage ? `${sanitized} ${sanitizeQuery(brokerage)}` : sanitized
+  const r2 = await attemptSearch(q2, state, apiKey, withIsTeam, `Pass 2 (name+brokerage${label})`)
+  if (!r2.timedOut) return { results: r2.results, apiTimeout: false }
+
+  // Pass 3: core distinctive token only
+  const core = coreToken(teamName)
+  const r3 = await attemptSearch(core, state, apiKey, withIsTeam, `Pass 3 (core token "${core}"${label})`)
+  if (!r3.timedOut) return { results: r3.results, apiTimeout: false }
+
+  return { results: [], apiTimeout: true }
 }
 
 async function findZillowUrl(input: {
@@ -145,21 +221,32 @@ async function findZillowUrl(input: {
   const state = parseState(location)
 
   if (!state) {
-    console.log(`[Zillow] ${team_name} | ${brokerage} | (no state)`)
+    console.log(`[Zillow] ${team_name} | ${brokerage} | (no state) — skipping`)
     console.log(`[Zillow]   Decision: REJECTED — no_state`)
     return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_state' }
   }
 
-  console.log(`[Zillow] ${team_name} | ${brokerage} | ${state}`)
+  console.log(`[Zillow] ${team_name} (${state}) — attempting search`)
 
   const apiKey = env.ZILLOW_ZIP_API_KEY
-  let results = await searchZillow(team_name, state, apiKey, true)
-  console.log(`[Zillow]   Search returned ${results.length} results`)
 
-  // Fallback: some teams are not tagged is_team in Zillow
+  // Primary: is_team=true
+  const primary = await searchWithFallback(team_name, brokerage, state, apiKey, true)
+  if (primary.apiTimeout) {
+    console.log(`[Zillow]   Decision: REJECTED — api_timeout`)
+    return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'api_timeout' }
+  }
+
+  let results = primary.results
+
+  // Secondary: some teams aren't tagged is_team in Zillow
   if (results.length === 0) {
-    results = await searchZillow(team_name, state, apiKey, false)
-    console.log(`[Zillow]   Fallback (no is_team) returned ${results.length} results`)
+    const secondary = await searchWithFallback(team_name, brokerage, state, apiKey, false)
+    if (secondary.apiTimeout) {
+      console.log(`[Zillow]   Decision: REJECTED — api_timeout`)
+      return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'api_timeout' }
+    }
+    results = secondary.results
   }
 
   if (results.length === 0) {
@@ -188,6 +275,12 @@ async function findZillowUrl(input: {
   })
 
   const best = scored[0]
+
+  // Gate: name score must clear minimum before brokerage bonus is considered
+  if (best.ns < MIN_NAME_SCORE) {
+    console.log(`[Zillow]   Decision: REJECTED — name score ${best.ns} below minimum ${MIN_NAME_SCORE}`)
+    return { zillow_url: null, match_score: best.total, matched_name: best.displayName, rejection_reason: 'below_threshold' }
+  }
 
   const inputChain = extractChain(brokerage)
   const resultChain = extractChain(best.result.business_name ?? '')
@@ -227,7 +320,7 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[Zillow] fetch error for "${team_name}": ${msg}`)
-    return Response.json({ data: { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_results' } })
+    return Response.json({ data: { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'api_timeout' } })
   }
 
   return Response.json({ data: result })
