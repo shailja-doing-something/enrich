@@ -9,196 +9,200 @@ const bodySchema = z.object({
   brokerage: z.string().default(''),
 })
 
-// Stripped before token comparison to isolate core identity tokens
-const MATCH_STOP_WORDS = new Set([
-  'realty', 'real', 'estate', 'properties', 'property', 'group', 'team',
-  'homes', 'home', 'associates', 'llc', 'inc', 'ltd', 'corp', 'co', 'the',
-  'of', 'at', 'on', 'and', 'in', 'by', 'brokered',
+const ACCEPT_THRESHOLD = 50
+
+const STATE_NAMES: Record<string, string> = {
+  'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR',
+  'california': 'CA', 'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE',
+  'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID',
+  'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS',
+  'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
+  'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS',
+  'missouri': 'MO', 'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV',
+  'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+  'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH', 'oklahoma': 'OK',
+  'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+  'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX', 'utah': 'UT',
+  'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV',
+  'wisconsin': 'WI', 'wyoming': 'WY', 'district of columbia': 'DC',
+}
+
+const NAME_STOP = new Set([
+  'team', 'group', 'realty', 'real', 'estate', 'properties', 'property',
+  'homes', 'home', 'llc', 'inc', 'the', 'of', 'at', 'on', 'and',
 ])
 
-// Maps known brokerage name variants → canonical chain ID.
-// Used for hard-reject when input and result chains are known and differ.
-// NOTE: order matters — more specific patterns first.
-const BROKERAGE_CHAIN_PATTERNS: Array<readonly [string, string]> = [
-  ['keller williams', 'kw'],
-  ['kellerwilliams', 'kw'],
-  ['re/max', 'remax'],
-  ['remax', 'remax'],
-  ['coldwell banker', 'coldwellbanker'],
-  ['compass', 'compass'],
-  ['century 21', 'c21'],
-  ['century21', 'c21'],
-  ['berkshire hathaway', 'bhhs'],
-  ['exp realty', 'exp'],
-  ['eXp realty', 'exp'],
-  ['exp realty', 'exp'],
-  ['sotheby', 'sothebys'],
-  ['engel', 'ev'],
-  ['howard hanna', 'howardhanna'],
-  ['john l. scott', 'johnlscott'],
-  ['john l scott', 'johnlscott'],
-  ['nexthome', 'nexthome'],
-  ['realty one group', 'rog'],
-  ['better homes', 'bhg'],
-  ['exit realty', 'exit'],
+// Used only for hard-reject: fires when BOTH sides are recognized chains and they differ
+const CHAIN_PATTERNS: Array<readonly [RegExp, string]> = [
+  [/keller\s*williams/i, 'kw'],
+  [/re\s*\/?\s*max/i, 'remax'],
+  [/coldwell\s*banker/i, 'coldwellbanker'],
+  [/\bcompass\b/i, 'compass'],
+  [/century\s*21/i, 'c21'],
+  [/berkshire\s*hathaway/i, 'bhhs'],
+  [/exp\s+realty/i, 'exp'],
+  [/sotheby/i, 'sothebys'],
+  [/engel.*v.lkers/i, 'ev'],
+  [/howard\s*hanna/i, 'howardhanna'],
+  [/long\s*(and|&)\s*foster/i, 'longfoster'],
+  [/weichert/i, 'weichert'],
 ]
-
-// Accept only if combined score >= this
-const ACCEPT_THRESHOLD = 0.60
-// Marked high-confidence if >= this
-const HIGH_THRESHOLD = 0.80
-// Hard-reject any result with name score below this (regardless of other signals)
-const MIN_NAME_SCORE = 0.35
 
 type ZillowResult = {
   profile_link: string
   team_name?: string | null
   business_name?: string | null
   full_name?: string | null
-  address_city?: string | null
   address_state?: string | null
   is_team?: boolean
-  _relevance?: number
 }
 
 type ZillowApiResponse = {
   total: number
-  page: number
-  limit: number
-  total_pages: number
   results: ZillowResult[]
 }
 
-function normalizeForMatch(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length > 0 && !MATCH_STOP_WORDS.has(t))
-    .join(' ')
-    .trim()
+export type FindZillowResult = {
+  zillow_url: string | null
+  match_score: number
+  matched_name: string | null
+  rejection_reason?: 'no_state' | 'no_results' | 'below_threshold' | 'chain_mismatch'
 }
 
-function tokenOverlapRatio(a: string, b: string): number {
-  const tokA = a.split(/\s+/).filter(Boolean)
-  const tokB = b.split(/\s+/).filter(Boolean)
-  if (tokA.length === 0 || tokB.length === 0) return 0
-  const shorter = tokA.length <= tokB.length ? tokA : tokB
-  const longer = tokA.length <= tokB.length ? tokB : tokA
-  return shorter.filter(t => longer.includes(t)).length / shorter.length
-}
-
-function fuzzySimScore(a: string, b: string): number {
-  const maxLen = Math.max(a.length, b.length)
-  return maxLen === 0 ? 1 : 1 - distance(a, b) / maxLen
-}
-
-function nameMatchScore(query: string, candidate: string): number {
-  const nq = normalizeForMatch(query)
-  const nc = normalizeForMatch(candidate)
-  if (!nq || !nc) return 0
-  return Math.max(tokenOverlapRatio(nq, nc), fuzzySimScore(nq, nc))
-}
-
-// Parses "Denver CO" or "Austin, TX" → { city: "Denver", state: "CO" }
-function parseLocation(location: string): { city: string; state: string } {
+function parseState(location: string): string | null {
   const tokens = location.trim().replace(/,/g, ' ').split(/\s+/).filter(Boolean)
+  // Last token as 2-letter code
   const last = tokens.at(-1) ?? ''
-  const state = last.length === 2 ? last.toUpperCase() : ''
-  const city = state ? tokens.slice(0, -1).join(' ') : tokens.join(' ')
-  return { city, state }
-}
-
-// Returns the canonical chain ID if the brokerage string matches a known chain, else null
-function extractChain(brokerage: string): string | null {
-  const lower = brokerage.toLowerCase()
-  for (const [pattern, chain] of BROKERAGE_CHAIN_PATTERNS) {
-    if (lower.includes(pattern.toLowerCase())) return chain
+  if (/^[A-Za-z]{2}$/.test(last)) return last.toUpperCase()
+  // Last 1–3 tokens as full state name
+  for (let n = 3; n >= 1; n--) {
+    const candidate = tokens.slice(-n).join(' ').toLowerCase()
+    if (STATE_NAMES[candidate]) return STATE_NAMES[candidate]
   }
   return null
 }
 
-// Returns 'match' when both chains are known and equal,
-//         'mismatch' when both are known and differ (hard-reject signal),
-//         'unknown' when either is an unrecognized brokerage
-function chainVote(inputBrokerage: string, resultBusiness: string): 'match' | 'mismatch' | 'unknown' {
-  if (!inputBrokerage || !resultBusiness) return 'unknown'
-  const a = extractChain(inputBrokerage)
-  const b = extractChain(resultBusiness)
-  if (!a || !b) return 'unknown'
-  return a === b ? 'match' : 'mismatch'
+function normalize(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length > 0 && !NAME_STOP.has(t))
+    .join(' ')
+    .trim()
 }
 
-// Strategy B (city+state) first → Strategy A (no geo, apply state filter client-side) fallback.
-// brokerage= param is NOT sent to API — it causes timeouts; scored client-side instead.
-async function fetchZillowCandidates(
+function calcNameScore(input: string, candidate: string): number {
+  const a = normalize(input)
+  const b = normalize(candidate)
+  if (!a || !b) return 0
+  const maxLen = Math.max(a.length, b.length)
+  return Math.round(70 * (1 - distance(a, b) / maxLen))
+}
+
+function calcBrokerageScore(inputBrokerage: string, resultBusiness: string): number {
+  if (!inputBrokerage || !resultBusiness) return 0
+  const a = normalize(inputBrokerage)
+  const b = normalize(resultBusiness)
+  if (!a || !b) return 0
+  if (a === b) return 30
+  if (a.includes(b) || b.includes(a)) return 20
+  const tokA = a.split(/\s+/)
+  const tokB = b.split(/\s+/)
+  if (tokA.some(t => t.length > 2 && tokB.includes(t))) return 10
+  return 0
+}
+
+function extractChain(s: string): string | null {
+  for (const [pattern, chain] of CHAIN_PATTERNS) {
+    if (pattern.test(s)) return chain
+  }
+  return null
+}
+
+async function searchZillow(
   teamName: string,
-  city: string,
   state: string,
-  apiKey: string
+  apiKey: string,
+  withIsTeam: boolean
 ): Promise<ZillowResult[]> {
-  const headers = { 'x-api-key': apiKey }
-  const baseParams: Record<string, string> = {
-    q: teamName,
-    is_team: 'true',
-    full_profile: 'true',
-    limit: '10',
-  }
-
-  // Strategy B: geo-constrained (city + state)
-  if (city && state) {
-    const url = new URL('https://zillow-zip.up.railway.app/api/agents/search')
-    Object.entries({ ...baseParams, city, state }).forEach(([k, v]) => url.searchParams.set(k, v))
-    const resp = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(8_000) })
-    if (!resp.ok) throw new Error(`Zillow API ${resp.status}`)
-    const data = (await resp.json()) as ZillowApiResponse
-    if ((data.results ?? []).length > 0) return data.results
-  }
-
-  // Strategy A fallback: no geo filter — state hard-rejected client-side in scoreResult
-  const url = new URL('https://zillow-zip.up.railway.app/api/agents/search')
-  Object.entries(baseParams).forEach(([k, v]) => url.searchParams.set(k, v))
-  const resp = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(8_000) })
+  const params = new URLSearchParams({ q: teamName, state, full_profile: 'true', limit: '20' })
+  if (withIsTeam) params.set('is_team', 'true')
+  const resp = await fetch(
+    `https://zillow-zip.up.railway.app/api/agents/search?${params.toString()}`,
+    { headers: { 'x-api-key': apiKey }, signal: AbortSignal.timeout(10_000) }
+  )
   if (!resp.ok) throw new Error(`Zillow API ${resp.status}`)
-  const data = (await resp.json()) as ZillowApiResponse
-  return data.results ?? []
+  return ((await resp.json()) as ZillowApiResponse).results ?? []
 }
 
-// Combined score for one Zillow result against the input team.
-// Returns 0 for any hard-reject (state mismatch, chain mismatch, name too low).
-// Formula: nameScore×0.60 + brokerageBonus×0.25 + cityBonus×0.15
-function scoreResult(
-  result: ZillowResult,
-  teamName: string,
-  inputBrokerage: string,
-  inputCity: string,
-  inputState: string
-): number {
-  // Hard reject: result state known and differs from input state
-  if (inputState && result.address_state) {
-    if (result.address_state.toUpperCase() !== inputState) return 0
+async function findZillowUrl(input: {
+  team_name: string
+  brokerage: string
+  location: string
+}): Promise<FindZillowResult> {
+  const { team_name, brokerage, location } = input
+  const state = parseState(location)
+
+  if (!state) {
+    console.log(`[Zillow] ${team_name} | ${brokerage} | (no state)`)
+    console.log(`[Zillow]   Decision: REJECTED — no_state`)
+    return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_state' }
   }
 
-  // Name score: best of team_name vs business_name comparisons
-  const teamScore = nameMatchScore(teamName, result.team_name ?? '')
-  const bizScore = nameMatchScore(teamName, result.business_name ?? '')
-  const nameScore = Math.max(teamScore, bizScore)
+  console.log(`[Zillow] ${team_name} | ${brokerage} | ${state}`)
 
-  // Hard reject: name similarity below floor
-  if (nameScore < MIN_NAME_SCORE) return 0
+  const apiKey = env.ZILLOW_ZIP_API_KEY
+  let results = await searchZillow(team_name, state, apiKey, true)
+  console.log(`[Zillow]   Search returned ${results.length} results`)
 
-  // Hard reject: brokerage chains are known and clearly differ
-  const chain = chainVote(inputBrokerage, result.business_name ?? '')
-  if (chain === 'mismatch') return 0
+  // Fallback: some teams are not tagged is_team in Zillow
+  if (results.length === 0) {
+    results = await searchZillow(team_name, state, apiKey, false)
+    console.log(`[Zillow]   Fallback (no is_team) returned ${results.length} results`)
+  }
 
-  const brokerageBonus = chain === 'match' ? 0.25 : 0
+  if (results.length === 0) {
+    console.log(`[Zillow]   Decision: REJECTED — no_results`)
+    return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_results' }
+  }
 
-  const cityBonus = (
-    inputCity.length > 0 &&
-    (result.address_city ?? '').toLowerCase() === inputCity.toLowerCase()
-  ) ? 0.15 : 0
+  type Scored = { result: ZillowResult; total: number; ns: number; bs: number; displayName: string }
+  const scored: Scored[] = results.map(r => {
+    const displayName = r.team_name ?? r.business_name ?? r.full_name ?? ''
+    const ns = Math.max(
+      calcNameScore(team_name, r.team_name ?? ''),
+      calcNameScore(team_name, r.business_name ?? '')
+    )
+    const bs = calcBrokerageScore(brokerage, r.business_name ?? '')
+    return { result: r, total: ns + bs, ns, bs, displayName }
+  })
+  scored.sort((a, b) => b.total - a.total)
 
-  return nameScore * 0.60 + brokerageBonus + cityBonus
+  console.log(`[Zillow]   Top ${Math.min(3, scored.length)} candidates:`)
+  scored.slice(0, 3).forEach((s, i) => {
+    console.log(
+      `[Zillow]     ${i + 1}. ${s.displayName} | ${s.result.business_name ?? ''} | ` +
+      `score=${s.total} (name=${s.ns}, brok=${s.bs})`
+    )
+  })
+
+  const best = scored[0]
+
+  const inputChain = extractChain(brokerage)
+  const resultChain = extractChain(best.result.business_name ?? '')
+  if (inputChain && resultChain && inputChain !== resultChain) {
+    console.log(`[Zillow]   Decision: REJECTED — chain mismatch (${inputChain} vs ${resultChain})`)
+    return { zillow_url: null, match_score: best.total, matched_name: best.displayName, rejection_reason: 'chain_mismatch' }
+  }
+
+  if (best.total < ACCEPT_THRESHOLD) {
+    console.log(`[Zillow]   Decision: REJECTED — top score ${best.total} below threshold ${ACCEPT_THRESHOLD}`)
+    return { zillow_url: null, match_score: best.total, matched_name: best.displayName, rejection_reason: 'below_threshold' }
+  }
+
+  console.log(`[Zillow]   Decision: ACCEPTED ${best.result.profile_link} (score=${best.total})`)
+  return { zillow_url: best.result.profile_link, match_score: best.total, matched_name: best.displayName }
 }
 
 export async function POST(request: NextRequest) {
@@ -214,54 +218,17 @@ export async function POST(request: NextRequest) {
   const { team_name, location, brokerage } = parsed.data
 
   if (!team_name.trim()) {
-    return Response.json({ data: { zillow_url: null, reason: 'empty_team_name' } })
+    return Response.json({ data: { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_state' } })
   }
 
-  const { city, state } = parseLocation(location)
-
-  let results: ZillowResult[]
+  let result: FindZillowResult
   try {
-    results = await fetchZillowCandidates(team_name, city, state, env.ZILLOW_ZIP_API_KEY)
+    result = await findZillowUrl({ team_name, brokerage, location })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error(`[find-zillow-url] fetch failed for "${team_name}": ${msg}`)
-    return Response.json({ data: { zillow_url: null, reason: 'network_error' } })
+    console.error(`[Zillow] fetch error for "${team_name}": ${msg}`)
+    return Response.json({ data: { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_results' } })
   }
 
-  if (results.length === 0) {
-    return Response.json({ data: { zillow_url: null, reason: 'no_results' } })
-  }
-
-  let bestScore = -1
-  let bestResult: ZillowResult | null = null
-
-  for (const r of results) {
-    const score = scoreResult(r, team_name, brokerage, city, state)
-    if (score > bestScore) {
-      bestScore = score
-      bestResult = r
-    }
-  }
-
-  if (!bestResult || bestScore < ACCEPT_THRESHOLD) {
-    console.log(`[find-zillow-url] "${team_name}": no match above threshold (best=${bestScore.toFixed(2)})`)
-    return Response.json({ data: { zillow_url: null, reason: 'below_threshold' } })
-  }
-
-  const matchedName = bestResult.team_name ?? bestResult.business_name ?? bestResult.full_name ?? ''
-  const confidence = bestScore >= HIGH_THRESHOLD ? 'high' : 'low'
-  console.log(
-    `[find-zillow-url] "${team_name}" → "${matchedName}" ` +
-    `(score=${bestScore.toFixed(2)}, confidence=${confidence}, ` +
-    `state=${bestResult.address_state ?? '?'}, ` +
-    `chain=${chainVote(brokerage, bestResult.business_name ?? '')})`
-  )
-
-  return Response.json({
-    data: {
-      zillow_url: bestResult.profile_link,
-      matched_name: matchedName,
-      confidence,
-    },
-  })
+  return Response.json({ data: result })
 }
