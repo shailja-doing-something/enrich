@@ -79,6 +79,9 @@ Sending `brokerage=` to the Zillow `/api/agents/search` endpoint consistently ca
 ### `&` in team name causes Zillow API HTTP 500 statement timeout — sanitize before sending
 A bare `&` in the `q=` query param (e.g. "Nguyen & Associates") triggers a slow server-side Postgres query path that consistently times out. Fix: `sanitizeQuery()` replaces ` & ` with ` and ` before building `URLSearchParams`. The original team name is always used for scoring — only the outgoing query string is sanitized.
 
+### Secondary Zillow search (no is_team filter) returns solo agents — filter before scoring
+When the primary `is_team=true` search returns 0 results, a secondary search without the filter fires as fallback. Solo agent profiles can appear in these results and, if their name matches the team name string, can score above the acceptance threshold. Fix: `isTeamRecord()` filters all results before scoring, requiring at least one of: `is_team === true`, a non-empty `team_name` field, or `business_name` containing "team"/"group" (word-boundary match). Apply this filter to results from BOTH primary and secondary searches — the primary should be clean, but the secondary is where solo agents slip in.
+
 ### Missing stop-words inflate Levenshtein score on shared generic suffixes
 If a common suffix token (e.g. `associates`) is not in `NAME_STOP`, two unrelated names can score artificially high by sharing only that suffix. Example: "Nguyen & Associates" and "Anna & Associates" both normalize to `"X associates"`, giving a Levenshtein distance of 6 over max length 17 → name score 45/70. Adding `'associates'` to `NAME_STOP` reduces both to their distinctive root ("nguyen" vs "anna"), which have distance 6/6 → score 0. Rule: any token that commonly appears as a team/business name suffix and carries no identity information belongs in NAME_STOP.
 

@@ -1,5 +1,10 @@
 # Release Notes
 
+## [0.9.11] — 2026-05-20 — Hard-reject solo agent records before scoring
+
+### Fixed
+- `app/api/company-enrichment/find-zillow-url/route.ts` — added `isTeamRecord()` filter applied to all results before scoring; solo agent profiles returned by the secondary search (no `is_team` filter) were reaching the scorer and could be ACCEPTED if their name happened to match; a result now must satisfy at least one of: `is_team === true`, `team_name` field populated, or `business_name` contains "team"/"group"; if all candidates fail, returns `no_results`; logs count of filtered solo records when any are dropped
+
 ## [0.9.10] — 2026-05-20 — Harden Zillow matching: `&` timeout fix, associates stop-word, MIN_NAME_SCORE gate
 
 ### Fixed

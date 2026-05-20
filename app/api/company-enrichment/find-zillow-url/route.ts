@@ -134,6 +134,19 @@ function calcBrokerageScore(inputBrokerage: string, resultBusiness: string): num
   return 0
 }
 
+// Hard-reject solo agent records before scoring.
+// A result qualifies as a team record if any of these are true:
+//   • is_team flag is explicitly true
+//   • has a team_name field (only populated on team profiles)
+//   • business_name contains "team" or "group" (common for unlabeled team brokerages)
+// Solo agents that slip through a secondary (no is_team filter) search are rejected here.
+function isTeamRecord(r: ZillowResult): boolean {
+  if (r.is_team) return true
+  if (r.team_name && r.team_name.trim()) return true
+  if (/\b(team|group)\b/i.test(r.business_name ?? '')) return true
+  return false
+}
+
 function extractChain(s: string): string | null {
   for (const [pattern, chain] of CHAIN_PATTERNS) {
     if (pattern.test(s)) return chain
@@ -253,6 +266,17 @@ async function findZillowUrl(input: {
     console.log(`[Zillow]   Decision: REJECTED — no_results`)
     return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_results' }
   }
+
+  // Hard-reject solo agent records before scoring — keeps only team profiles
+  const teamResults = results.filter(isTeamRecord)
+  if (teamResults.length === 0) {
+    console.log(`[Zillow]   Decision: REJECTED — no_results (all ${results.length} candidate(s) are solo agent profiles)`)
+    return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_results' }
+  }
+  if (teamResults.length < results.length) {
+    console.log(`[Zillow]   Filtered ${results.length - teamResults.length} solo agent record(s), ${teamResults.length} team record(s) remain`)
+  }
+  results = teamResults
 
   type Scored = { result: ZillowResult; total: number; ns: number; bs: number; displayName: string }
   const scored: Scored[] = results.map(r => {
