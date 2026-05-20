@@ -219,13 +219,15 @@ export async function POST(request: NextRequest) {
       console.log(`[run-contacts] ${team.team_name}: ${agents.length} agents to insert`)
 
       if (agents.length > 0) {
-        const { error: insertErr } = await supabaseAdmin.rpc('ce_insert_agents_bulk', {
+        const { data: insertedCount, error: insertErr } = await supabaseAdmin.rpc('ce_insert_agents_bulk', {
           p_agents: agents,
         })
         if (insertErr) {
           throw new Error(`Agent insert failed: ${insertErr.message}`)
         }
-        totalAgentsWritten += agents.length
+        const actualInserted = (insertedCount as number) ?? 0
+        console.log(`[run-contacts] ${team.team_name}: inserted ${actualInserted}/${agents.length} agents`)
+        totalAgentsWritten += actualInserted
       }
 
       const { error: stageErr } = await supabaseAdmin.rpc('ce_update_team_pipeline_stage', {
