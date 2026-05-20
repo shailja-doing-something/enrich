@@ -1,5 +1,10 @@
 # Release Notes
 
+## [0.9.13] — 2026-05-20 — Score full_name alongside team_name and business_name in Zillow matcher
+
+### Fixed
+- `app/api/company-enrichment/find-zillow-url/route.ts` — added `calcNameScore(team_name, r.full_name ?? '')` as a third term in the `ns = Math.max(...)` calculation; `full_name` is Zillow's public profile display name and frequently contains the actual team name; when Zillow stores the team name in `full_name` only (e.g. lead's personal name is in `team_name`, team display name is in `full_name`), the previous code scored 0 and falsely rejected; no thresholds, gates, normalization, or fallback logic changed
+
 ## [0.9.12] — 2026-05-20 — Fix website picker: switch from OpenRouter to Anthropic API directly
 
 ### Fixed

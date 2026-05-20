@@ -283,7 +283,8 @@ async function findZillowUrl(input: {
     const displayName = r.team_name ?? r.business_name ?? r.full_name ?? ''
     const ns = Math.max(
       calcNameScore(team_name, r.team_name ?? ''),
-      calcNameScore(team_name, r.business_name ?? '')
+      calcNameScore(team_name, r.business_name ?? ''),
+      calcNameScore(team_name, r.full_name ?? '')
     )
     const bs = calcBrokerageScore(brokerage, r.business_name ?? '')
     return { result: r, total: ns + bs, ns, bs, displayName }

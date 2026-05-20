@@ -79,6 +79,9 @@ Sending `brokerage=` to the Zillow `/api/agents/search` endpoint consistently ca
 ### `&` in team name causes Zillow API HTTP 500 statement timeout — sanitize before sending
 A bare `&` in the `q=` query param (e.g. "Nguyen & Associates") triggers a slow server-side Postgres query path that consistently times out. Fix: `sanitizeQuery()` replaces ` & ` with ` and ` before building `URLSearchParams`. The original team name is always used for scoring — only the outgoing query string is sanitized.
 
+### Zillow `full_name` is the public profile display name — score it alongside `team_name`
+Zillow result objects have three name fields: `team_name` (often the lead agent's personal name, e.g. "Jennifer Anderson"), `business_name` (the brokerage), and `full_name` (the public profile display name, e.g. "The Jen Anderson Team - Long Realty"). The actual team name lives in `full_name` for many profiles. Scoring only `team_name` and `business_name` produces ns=0 for any team whose display name is in `full_name` only. Fix: add `full_name` as a third argument to the `Math.max(...)` call in the `ns` computation.
+
 ### OpenRouter model IDs are versioned — `anthropic/claude-haiku` is not valid
 OpenRouter requires versioned model slugs (e.g. `anthropic/claude-3-haiku`, `anthropic/claude-3-5-haiku`). The bare `anthropic/claude-haiku` returns HTTP 400 "not a valid model ID". The error is caught and the function falls back to `candidates[0]` silently, so website picking appears to work but is always just taking the first Oxylabs result. Fix: remove OpenRouter entirely and call the Anthropic API directly (`https://api.anthropic.com/v1/messages`) with the `ANTHROPIC_API_KEY` already in env — cleaner, no intermediate service, correct response shape.
 
