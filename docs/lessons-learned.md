@@ -79,6 +79,9 @@ Sending `brokerage=` to the Zillow `/api/agents/search` endpoint consistently ca
 ### `&` in team name causes Zillow API HTTP 500 statement timeout — sanitize before sending
 A bare `&` in the `q=` query param (e.g. "Nguyen & Associates") triggers a slow server-side Postgres query path that consistently times out. Fix: `sanitizeQuery()` replaces ` & ` with ` and ` before building `URLSearchParams`. The original team name is always used for scoring — only the outgoing query string is sanitized.
 
+### OpenRouter model IDs are versioned — `anthropic/claude-haiku` is not valid
+OpenRouter requires versioned model slugs (e.g. `anthropic/claude-3-haiku`, `anthropic/claude-3-5-haiku`). The bare `anthropic/claude-haiku` returns HTTP 400 "not a valid model ID". The error is caught and the function falls back to `candidates[0]` silently, so website picking appears to work but is always just taking the first Oxylabs result. Fix: remove OpenRouter entirely and call the Anthropic API directly (`https://api.anthropic.com/v1/messages`) with the `ANTHROPIC_API_KEY` already in env — cleaner, no intermediate service, correct response shape.
+
 ### Secondary Zillow search (no is_team filter) returns solo agents — filter before scoring
 When the primary `is_team=true` search returns 0 results, a secondary search without the filter fires as fallback. Solo agent profiles can appear in these results and, if their name matches the team name string, can score above the acceptance threshold. Fix: `isTeamRecord()` filters all results before scoring, requiring at least one of: `is_team === true`, a non-empty `team_name` field, or `business_name` containing "team"/"group" (word-boundary match). Apply this filter to results from BOTH primary and secondary searches — the primary should be clean, but the secondary is where solo agents slip in.
 

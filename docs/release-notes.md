@@ -1,5 +1,10 @@
 # Release Notes
 
+## [0.9.12] — 2026-05-20 — Fix website picker: switch from OpenRouter to Anthropic API directly
+
+### Fixed
+- `app/api/company-enrichment/find-website/route.ts` — replaced OpenRouter call with direct Anthropic API call; `anthropic/claude-haiku` is not a valid OpenRouter model slug (400 on every request, silently falling back to `candidates[0]` for every team); now calls `https://api.anthropic.com/v1/messages` with `claude-haiku-4-5-20251001`; uses `x-api-key` + `anthropic-version` headers per Anthropic spec; removed `OpenRouterResponse` type, added `AnthropicResponse` type matching the messages API response shape
+
 ## [0.9.11] — 2026-05-20 — Hard-reject solo agent records before scoring
 
 ### Fixed

@@ -22,8 +22,8 @@ type OxylabsResponse = {
   }>
 }
 
-type OpenRouterResponse = {
-  choices?: Array<{ message?: { content?: string } }>
+type AnthropicResponse = {
+  content?: Array<{ type: string; text: string }>
 }
 
 async function searchGoogle(query: string): Promise<string[]> {
@@ -52,28 +52,31 @@ async function pickWithClaude(teamName: string, brokerage: string, location: str
   const candidateList = candidates.map(u => `- ${u}`).join('\n')
   const prompt = `Real estate team: ${teamName}\nBrokerage: ${brokerage}\nLocation: ${location}\n\nWhich of these URLs is the team's official website?\n${candidateList}\n\nReply with ONLY the URL, or "none" if none match.`
   try {
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.ANTHROPIC_API_KEY}` },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
       body: JSON.stringify({
-        model: 'anthropic/claude-haiku',
-        messages: [{ role: 'user', content: prompt }],
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 100,
-        temperature: 0,
+        messages: [{ role: 'user', content: prompt }],
       }),
       signal: AbortSignal.timeout(30_000),
     })
     if (!resp.ok) {
-      console.error(`[find-website] OpenRouter ${resp.status}: ${await resp.text().catch(() => '')}`)
+      console.error(`[find-website] Anthropic ${resp.status}: ${await resp.text().catch(() => '')}`)
       return candidates[0] ?? ''
     }
-    const data = await resp.json() as OpenRouterResponse
-    const answer = (data.choices?.[0]?.message?.content ?? '').trim()
+    const data = await resp.json() as AnthropicResponse
+    const answer = (data.content?.[0]?.text ?? '').trim()
     if (answer.toLowerCase() === 'none') return ''
     const urls = answer.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/g) ?? []
     return urls[0]?.replace(/[.,)]+$/, '') ?? ''
   } catch (err) {
-    console.error(`[find-website] OpenRouter error: ${(err as Error).message}`)
+    console.error(`[find-website] Anthropic error: ${(err as Error).message}`)
     return candidates[0] ?? ''
   }
 }
