@@ -1,5 +1,19 @@
 # Release Notes
 
+## [0.9.10] — 2026-05-20 — Harden Zillow matching: `&` timeout fix, associates stop-word, MIN_NAME_SCORE gate
+
+### Fixed
+- `app/api/company-enrichment/find-zillow-url/route.ts` — added `'associates'` to `NAME_STOP`; its absence was inflating the Levenshtein name score for any two names sharing the ` associates` suffix (e.g. "Nguyen & Associates" vs "Anna & Associates" scored 45/70 on shared suffix alone, which plus brokerage bonus cleared the 50-point threshold → false positive ACCEPTED)
+- Same file — added `sanitizeQuery()`: replaces ` & ` with ` and ` in the query string sent to the Zillow API; the `&` character was causing HTTP 500 statement timeouts server-side; the original name is preserved and used for scoring
+- Same file — added `MIN_NAME_SCORE = 40` gate: the name score must independently reach 40/70 before the brokerage bonus (0-30) is considered; prevents brokerage match from rescuing a fundamentally wrong name
+- Same file — added three-pass fallback cascade in `searchWithFallback()`: Pass 1 (sanitized name) → Pass 2 (name + brokerage) → Pass 3 (core distinctive token via `coreToken()`); each pass falls through to the next only on 5xx/timeout, never on 0 results
+- Same file — `attemptSearch()` now retries up to 3 times with 1s then 3s backoff on 5xx; AbortSignal timeout raised from 10s to 20s per request; returns `timedOut: true` only after all retries exhausted
+- Same file — added `'api_timeout'` to `rejection_reason` union type; returned when all passes and all retries are exhausted with no usable results
+
+### Verified
+- "Nguyen & Associates" (CO, RE/MAX): name score = 9/70, below MIN_NAME_SCORE 40 → **REJECTED** (was falsely ACCEPTED before fix)
+- 5-team regression test batch: all 5/5 correct profile_link matches preserved
+
 ## [0.9.9] — 2026-05-20 — Rewrite Zillow URL matching with hard-reject scoring
 
 ### Changed

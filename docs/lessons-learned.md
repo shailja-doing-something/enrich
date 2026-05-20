@@ -76,6 +76,12 @@ When state matches, brokerage matches, AND city matches, a very weak name simila
 ### `brokerage=` param causes Zillow API statement timeouts — score client-side instead
 Sending `brokerage=` to the Zillow `/api/agents/search` endpoint consistently causes backend timeouts (>8s, sometimes up to 30s). Never send it. Receive all results matching the team name, then score brokerage chain client-side via BROKERAGE_CHAIN_PATTERNS normalization.
 
+### `&` in team name causes Zillow API HTTP 500 statement timeout — sanitize before sending
+A bare `&` in the `q=` query param (e.g. "Nguyen & Associates") triggers a slow server-side Postgres query path that consistently times out. Fix: `sanitizeQuery()` replaces ` & ` with ` and ` before building `URLSearchParams`. The original team name is always used for scoring — only the outgoing query string is sanitized.
+
+### Missing stop-words inflate Levenshtein score on shared generic suffixes
+If a common suffix token (e.g. `associates`) is not in `NAME_STOP`, two unrelated names can score artificially high by sharing only that suffix. Example: "Nguyen & Associates" and "Anna & Associates" both normalize to `"X associates"`, giving a Levenshtein distance of 6 over max length 17 → name score 45/70. Adding `'associates'` to `NAME_STOP` reduces both to their distinctive root ("nguyen" vs "anna"), which have distance 6/6 → score 0. Rule: any token that commonly appears as a team/business name suffix and carries no identity information belongs in NAME_STOP.
+
 ## Decisions
 
 ### Proxy pattern for Supabase clients
