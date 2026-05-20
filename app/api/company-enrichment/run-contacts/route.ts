@@ -136,23 +136,46 @@ async function scrapeUrlForAgents(
 }
 
 function mergeAgents(webAgents: AgentInsertRow[], zillowAgents: AgentInsertRow[]): AgentInsertRow[] {
-  const seen = new Map<string, AgentInsertRow>()
-
+  // Email-keyed dedup: zillow wins on conflict, mark source 'zillow;web' if both have it
+  const byEmail = new Map<string, AgentInsertRow>()
   for (const agent of webAgents) {
     const key = agent.email.toLowerCase().trim()
-    if (key) seen.set(key, agent)
+    if (key) byEmail.set(key, agent)
   }
   for (const agent of zillowAgents) {
     const key = agent.email.toLowerCase().trim()
     if (key) {
-      const existing = seen.get(key)
-      seen.set(key, { ...agent, source: existing ? 'zillow;web' : 'zillow' })
+      const existing = byEmail.get(key)
+      byEmail.set(key, { ...agent, source: existing ? 'zillow;web' : 'zillow' })
     }
   }
 
-  // Include agents without email (no dedup possible — keep all)
-  const noEmail = [...webAgents, ...zillowAgents].filter(a => !a.email.trim())
-  return Array.from(seen.values()).concat(noEmail)
+  // Name-keyed dedup for agents without email: merge phone/designation across sources
+  const byName = new Map<string, AgentInsertRow>()
+  const unnamed: AgentInsertRow[] = []
+
+  for (const agent of [...webAgents, ...zillowAgents]) {
+    if (agent.email.trim()) continue  // handled above
+    const nameKey = `${agent.first_name.toLowerCase().trim()}|${agent.last_name.toLowerCase().trim()}`
+    if (!agent.first_name.trim() && !agent.last_name.trim()) {
+      unnamed.push(agent)
+      continue
+    }
+    const existing = byName.get(nameKey)
+    if (!existing) {
+      byName.set(nameKey, agent)
+    } else {
+      // Same name on both sources — merge: prefer whichever has phone/designation, mark both
+      byName.set(nameKey, {
+        ...existing,
+        phone: existing.phone || agent.phone,
+        designation: existing.designation || agent.designation,
+        source: existing.source !== agent.source ? `${existing.source};${agent.source}` : existing.source,
+      })
+    }
+  }
+
+  return Array.from(byEmail.values()).concat(Array.from(byName.values()), unnamed)
 }
 
 async function enrichTeam(team: QualifiedTeam, batchId: string): Promise<AgentInsertRow[]> {
