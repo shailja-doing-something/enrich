@@ -1,7 +1,5 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import { spawn } from 'child_process'
-import path from 'path'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { env } from '@/lib/env'
 
@@ -18,48 +16,31 @@ type VerifyResult = {
   error?: string
 }
 
-function callVerifyUrl(websiteUrl: string): Promise<VerifyResult> {
-  return new Promise((resolve) => {
-    const scriptPath = path.join(process.cwd(), 'scripts', 'verify_urls.py')
-    const proc = spawn('python3', [scriptPath], {
-      env: {
-        ...process.env,
-        OXYLABS_USERNAME: env.OXYLABS_USERNAME,
-        OXYLABS_PASSWORD: env.OXYLABS_PASSWORD,
-      },
+type OxylabsUniversalResponse = {
+  results?: Array<{ status_code?: number }>
+}
+
+async function callVerifyUrl(websiteUrl: string): Promise<VerifyResult> {
+  if (!websiteUrl) return { valid: false, error: 'no website found' }
+  const creds = Buffer.from(`${env.OXYLABS_USERNAME}:${env.OXYLABS_PASSWORD}`).toString('base64')
+  try {
+    const resp = await fetch('https://realtime.oxylabs.io/v1/queries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${creds}` },
+      body: JSON.stringify({ source: 'universal', url: websiteUrl }),
+      signal: AbortSignal.timeout(60_000),
     })
-
-    const timer = setTimeout(() => { proc.kill(); resolve({ valid: false, error: 'timeout' }) }, 60_000)
-
-    let stdout = ''
-    let stderr = ''
-    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-
-    proc.stdin.write(JSON.stringify({ website: websiteUrl }))
-    proc.stdin.end()
-
-    proc.on('close', (code) => {
-      clearTimeout(timer)
-      if (code !== 0) {
-        console.error(`[verify-urls] script exited ${code}: ${stderr.trim()}`)
-        resolve({ valid: false, error: stderr.trim() || 'non-zero exit' })
-        return
-      }
-      try {
-        const result = JSON.parse(stdout.trim()) as { valid?: boolean; error?: string }
-        resolve({ valid: result.valid ?? false, error: result.error })
-      } catch {
-        resolve({ valid: false, error: 'invalid script output' })
-      }
-    })
-
-    proc.on('error', (err) => {
-      clearTimeout(timer)
-      console.error(`[verify-urls] spawn error: ${err.message}`)
-      resolve({ valid: false, error: err.message })
-    })
-  })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      return { valid: false, error: `Oxylabs HTTP ${resp.status}: ${text.slice(0, 200)}` }
+    }
+    const data = await resp.json() as OxylabsUniversalResponse
+    const statusCode = data.results?.[0]?.status_code ?? 0
+    if (statusCode === 200) return { valid: true }
+    return { valid: false, error: `HTTP ${statusCode}` }
+  } catch (err) {
+    return { valid: false, error: (err as Error).message }
+  }
 }
 
 export async function POST(request: NextRequest) {

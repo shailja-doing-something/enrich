@@ -660,7 +660,7 @@ export default function DashboardPage() {
                       href={`/api/company-enrichment/export/${batch.batch_id}`}
                       className="text-blue-600 hover:underline text-sm"
                     >
-                      Download CSV
+                      Download teams CSV
                     </a>
                     <button
                       onClick={() => handleBatchDelete(batch.batch_id, batch.status === 'complete')}
