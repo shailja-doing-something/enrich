@@ -1,5 +1,27 @@
 # Release Notes
 
+## [0.9.7] — 2026-05-20 — Contact enrichment: replace Python subprocess chain with Edge Function calls
+
+### Fixed
+- `app/api/company-enrichment/run-contacts/route.ts` — replaced entire Python subprocess chain (`spawn python3` for discover_team_urls, orchestrate, zillow_team_scraper, merge_agents, clean_contacts) with TypeScript `fetch` calls to the deployed `scrape-urls-combined` and `extract-team-data` Supabase Edge Functions; no Python, no temp files, no XLSX dependency
+- Synced `FUNCTION_SECRET` between Railway and Supabase Edge Function secrets via `supabase secrets set` — the mismatch was causing 401 Unauthorized on all Edge Function calls even when the Python scripts ran
+
+### Root causes found
+- Python3 not in Railway Node.js container → all `spawn('python3')` calls ENOENT (caught, returned null)
+- `orchestrate.py` and `zillow_team_scraper.py` were stubs returning `[]` — even local Python execution would produce 0 contacts
+- `FUNCTION_SECRET` digest in Supabase differed from Railway env var — 401 blocked all Edge Function calls
+
+### Architecture (new)
+`enrichTeam()` calls `scrapeUrlForAgents()` in parallel for web and zillow URLs. Each call: `scrape-urls-combined` → markdown → `extract-team-data` → `agents_data[]`. `mergeAgents()` deduplicates by email (zillow wins), source tagged `'web'`, `'zillow'`, or `'zillow;web'`.
+
+### Verified (test batch 32caea10, 3 teams)
+- Smith Premier Realty: web=1, zillow=4, merged=5 agents
+- Pacific Coast Properties: web=0, zillow=7, merged=7 agents
+- The Johnson Team: web=0, zillow=1, merged=1 agent
+- Total: **13 agents written** to staging.agents, `has_error=false`
+
+---
+
 ## [0.9.6] — 2026-05-20 — Port verify-urls to TypeScript, fix export CSV columns, rename button
 
 ### Fixed
