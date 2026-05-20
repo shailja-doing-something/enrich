@@ -1,9 +1,5 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import { spawn } from 'child_process'
-import { promises as fs } from 'fs'
-import path from 'path'
-import * as XLSX from 'xlsx'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { env } from '@/lib/env'
 
@@ -29,198 +25,149 @@ type AgentInsertRow = {
   source: string
 }
 
-function subprocessEnv() {
-  return {
-    ...process.env,
-    OXYLABS_USERNAME: env.OXYLABS_USERNAME,
-    OXYLABS_PASSWORD: env.OXYLABS_PASSWORD,
-    ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
-    VITE_SUPABASE_URL: env.NEXT_PUBLIC_SUPABASE_URL,
-    VITE_SUPABASE_ANON_KEY: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    VITE_SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
-    VITE_FUNCTION_SECRET: env.FUNCTION_SECRET,
-  }
+type ScrapeResponse = {
+  markdown?: string
+  pages_scraped?: number
+  failed_urls?: string[]
 }
 
-function runScript(
-  scriptPath: string,
-  args: string[],
-  opts: { cwd: string; timeoutMs: number }
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('python3', [scriptPath, ...args], {
-      cwd: opts.cwd,
-      env: subprocessEnv(),
-    })
-
-    const timer = setTimeout(() => {
-      proc.kill()
-      reject(new Error(`Script timed out after ${opts.timeoutMs / 1000}s: ${scriptPath}`))
-    }, opts.timeoutMs)
-
-    let stderr = ''
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-
-    proc.on('close', (code) => {
-      clearTimeout(timer)
-      if (code !== 0) {
-        reject(new Error(`Script exited ${code}: ${stderr.trim().slice(0, 300)}`))
-      } else {
-        resolve()
-      }
-    })
-
-    proc.on('error', (err) => {
-      clearTimeout(timer)
-      reject(err)
-    })
-  })
+type ExtractResponse = {
+  agents_data?: Array<{
+    name?: string
+    email?: string[]
+    phone?: string[]
+    designation?: string
+  }>
+  has_contacts?: boolean
 }
 
-async function runWebScraper(
-  team: QualifiedTeam,
-  teamDir: string
-): Promise<string | null> {
-  const inputCsvPath = path.join(teamDir, 'teams_input.csv')
-  const priorityUrlsPath = path.join(teamDir, 'team_priority_urls.json')
-  const agentsCsvPath = path.join(teamDir, 'agents.csv')
-
-  // Write input CSV: uuid, team_name, url
-  const csvContent = `uuid,team_name,url\n${team.team_id},"${(team.team_name ?? '').replace(/"/g, '""')}","${(team.website_url ?? '').replace(/"/g, '""')}"\n`
-  await fs.writeFile(inputCsvPath, csvContent, 'utf8')
-
-  const discoverScript = path.join(process.cwd(), 'scripts', 'enrichment', 'web-scraper', 'discover_team_urls.py')
-  try {
-    await runScript(discoverScript, [inputCsvPath], { cwd: teamDir, timeoutMs: 120_000 })
-  } catch (err) {
-    console.error(`[run-contacts] web discover failed for ${team.team_name}: ${(err as Error).message}`)
-    return null
-  }
-
-  const priorityUrlsExists = await fs.access(priorityUrlsPath).then(() => true).catch(() => false)
-  if (!priorityUrlsExists) return null
-
-  const orchestrateScript = path.join(process.cwd(), 'scripts', 'enrichment', 'web-scraper', 'orchestrate.py')
-  try {
-    await runScript(orchestrateScript, [priorityUrlsPath], { cwd: teamDir, timeoutMs: 300_000 })
-  } catch (err) {
-    console.error(`[run-contacts] web orchestrate failed for ${team.team_name}: ${(err as Error).message}`)
-    return null
-  }
-
-  const agentsExists = await fs.access(agentsCsvPath).then(() => true).catch(() => false)
-  return agentsExists ? agentsCsvPath : null
+function splitName(fullName: string): { firstName: string; lastName: string } {
+  const parts = fullName.trim().split(/\s+/)
+  if (parts.length === 0) return { firstName: '', lastName: '' }
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' }
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') }
 }
 
-async function runZillowScraper(
-  team: QualifiedTeam,
-  teamDir: string
-): Promise<string | null> {
-  const inputCsvPath = path.join(teamDir, 'zillow_input.csv')
-  const agentsCsvPath = path.join(teamDir, 'agents_zillow.csv')
-
-  // Write input CSV: team_id, team_name, zillow_url
-  const csvContent = `team_id,team_name,zillow_url\n${team.team_id},"${(team.team_name ?? '').replace(/"/g, '""')}","${(team.zillow_url ?? '').replace(/"/g, '""')}"\n`
-  await fs.writeFile(inputCsvPath, csvContent, 'utf8')
-
-  const script = path.join(process.cwd(), 'scripts', 'enrichment', 'zillow-scraper', 'zillow_team_scraper.py')
-  try {
-    await runScript(script, [inputCsvPath], { cwd: teamDir, timeoutMs: 120_000 })
-  } catch (err) {
-    console.error(`[run-contacts] zillow scraper failed for ${team.team_name}: ${(err as Error).message}`)
-    return null
-  }
-
-  const exists = await fs.access(agentsCsvPath).then(() => true).catch(() => false)
-  return exists ? agentsCsvPath : null
+function normalizeUrl(url: string): string {
+  if (!url) return ''
+  return url.startsWith('http') ? url : `https://${url}`
 }
 
-async function runMerge(
-  teamDir: string,
-  webCsvPath: string | null,
-  zillowCsvPath: string | null
-): Promise<string | null> {
-  const mergeScript = path.join(process.cwd(), 'scripts', 'enrichment', 'data-transform', 'merge_agents.py')
-  const args: string[] = []
-  if (webCsvPath) args.push('--web', webCsvPath)
-  if (zillowCsvPath) args.push('--zillow', zillowCsvPath)
-  if (args.length === 0) return null
-
-  try {
-    await runScript(mergeScript, args, { cwd: teamDir, timeoutMs: 120_000 })
-  } catch (err) {
-    console.error(`[run-contacts] merge failed: ${(err as Error).message}`)
-    return null
-  }
-
-  const mergedPath = path.join(teamDir, 'agents_merged.csv')
-  const exists = await fs.access(mergedPath).then(() => true).catch(() => false)
-  return exists ? mergedPath : null
-}
-
-async function runClean(
-  teamDir: string,
-  mergedCsvPath: string
-): Promise<string | null> {
-  const cleanScript = path.join(process.cwd(), 'scripts', 'enrichment', 'data-cleaning', 'clean_contacts.py')
-  try {
-    await runScript(cleanScript, [mergedCsvPath], { cwd: teamDir, timeoutMs: 120_000 })
-  } catch (err) {
-    console.error(`[run-contacts] clean failed: ${(err as Error).message}`)
-    return null
-  }
-
-  const xlsxPath = path.join(teamDir, 'agents_merged_contact_cleaned.xlsx')
-  const exists = await fs.access(xlsxPath).then(() => true).catch(() => false)
-  return exists ? xlsxPath : null
-}
-
-function parseXlsx(xlsxPath: string, teamId: string, batchId: string): AgentInsertRow[] {
-  const wb = XLSX.readFile(xlsxPath)
-  const ws = wb.Sheets[wb.SheetNames[0]]
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws)
-
-  return rows
-    .filter(r => typeof r['Email'] === 'string' && (r['Email'] as string).trim() !== '')
-    .map(r => ({
-      batch_id: batchId,
-      team_id: teamId,
-      first_name: String(r['First Name'] ?? ''),
-      last_name: String(r['Last Name'] ?? ''),
-      email: String(r['Email'] ?? '').trim().toLowerCase(),
-      phone: String(r['Phone Number'] ?? ''),
-      designation: String(r['Job Title'] ?? ''),
-      source: String(r['source'] ?? ''),
-    }))
-}
-
-async function enrichTeam(
-  team: QualifiedTeam,
+async function scrapeUrlForAgents(
   batchId: string,
-  teamDir: string
+  teamId: string,
+  teamName: string,
+  url: string,
+  source: 'web' | 'zillow'
 ): Promise<AgentInsertRow[]> {
-  await fs.mkdir(teamDir, { recursive: true })
+  const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL
+  const anonKey = env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const functionSecret = env.FUNCTION_SECRET
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${anonKey}`,
+    'x-function-secret': functionSecret,
+  }
 
-  // SOURCE A and SOURCE B run in parallel
-  const [webCsvPath, zillowCsvPath] = await Promise.all([
-    team.web_valid ? runWebScraper(team, teamDir) : Promise.resolve(null),
-    (team.zillow_valid && team.zillow_url) ? runZillowScraper(team, teamDir) : Promise.resolve(null),
+  const normalizedUrl = normalizeUrl(url)
+  if (!normalizedUrl) return []
+
+  let markdown = ''
+  try {
+    const scrapeResp = await fetch(`${supabaseUrl}/functions/v1/scrape-urls-combined`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ team_uuid: teamId, team_name: teamName, urls: [normalizedUrl] }),
+      signal: AbortSignal.timeout(90_000),
+    })
+    if (!scrapeResp.ok) {
+      const text = await scrapeResp.text().catch(() => '')
+      console.error(`[run-contacts] scrape-urls-combined ${scrapeResp.status} for ${teamName} (${source}): ${text.slice(0, 200)}`)
+      return []
+    }
+    const scrapeData = await scrapeResp.json() as ScrapeResponse
+    markdown = scrapeData.markdown ?? ''
+    console.log(`[run-contacts] scraped ${teamName} (${source}): pages=${scrapeData.pages_scraped}, len=${markdown.length}, failed=${JSON.stringify(scrapeData.failed_urls ?? [])}`)
+  } catch (err) {
+    console.error(`[run-contacts] scrape error ${teamName} (${source}): ${(err as Error).message}`)
+    return []
+  }
+
+  if (!markdown) {
+    console.log(`[run-contacts] ${teamName} (${source}): empty markdown, skipping extract`)
+    return []
+  }
+
+  try {
+    const extractResp = await fetch(`${supabaseUrl}/functions/v1/extract-team-data`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ team_uuid: teamId, team_name: teamName, markdown }),
+      signal: AbortSignal.timeout(90_000),
+    })
+    if (!extractResp.ok) {
+      const text = await extractResp.text().catch(() => '')
+      console.error(`[run-contacts] extract-team-data ${extractResp.status} for ${teamName} (${source}): ${text.slice(0, 200)}`)
+      return []
+    }
+    const extractData = await extractResp.json() as ExtractResponse
+    const agentsData = extractData.agents_data ?? []
+    console.log(`[run-contacts] extracted ${teamName} (${source}): ${agentsData.length} agents, has_contacts=${extractData.has_contacts}`)
+
+    return agentsData
+      .filter(a => (a.name ?? '').trim() !== '' || (a.email ?? []).length > 0)
+      .map(a => {
+        const { firstName, lastName } = splitName(a.name ?? '')
+        return {
+          batch_id: batchId,
+          team_id: teamId,
+          first_name: firstName,
+          last_name: lastName,
+          email: (a.email ?? []).join('; ').trim(),
+          phone: (a.phone ?? []).join('; ').trim(),
+          designation: a.designation ?? '',
+          source,
+        }
+      })
+  } catch (err) {
+    console.error(`[run-contacts] extract error ${teamName} (${source}): ${(err as Error).message}`)
+    return []
+  }
+}
+
+function mergeAgents(webAgents: AgentInsertRow[], zillowAgents: AgentInsertRow[]): AgentInsertRow[] {
+  const seen = new Map<string, AgentInsertRow>()
+
+  for (const agent of webAgents) {
+    const key = agent.email.toLowerCase().trim()
+    if (key) seen.set(key, agent)
+  }
+  for (const agent of zillowAgents) {
+    const key = agent.email.toLowerCase().trim()
+    if (key) {
+      const existing = seen.get(key)
+      seen.set(key, { ...agent, source: existing ? 'zillow;web' : 'zillow' })
+    }
+  }
+
+  // Include agents without email (no dedup possible — keep all)
+  const noEmail = [...webAgents, ...zillowAgents].filter(a => !a.email.trim())
+  return Array.from(seen.values()).concat(noEmail)
+}
+
+async function enrichTeam(team: QualifiedTeam, batchId: string): Promise<AgentInsertRow[]> {
+  const [webAgents, zillowAgents] = await Promise.all([
+    (team.web_valid && team.website_url)
+      ? scrapeUrlForAgents(batchId, team.team_id, team.team_name ?? '', team.website_url, 'web')
+      : Promise.resolve<AgentInsertRow[]>([]),
+    (team.zillow_valid && team.zillow_url)
+      ? scrapeUrlForAgents(batchId, team.team_id, team.team_name ?? '', team.zillow_url, 'zillow')
+      : Promise.resolve<AgentInsertRow[]>([]),
   ])
 
-  if (!webCsvPath && !zillowCsvPath) return []
-
-  const mergedPath = await runMerge(teamDir, webCsvPath, zillowCsvPath)
-  if (!mergedPath) return []
-
-  // Skip clean (and openpyxl dependency) when there are no rows to process
-  const mergedContent = await fs.readFile(mergedPath, 'utf8')
-  const mergedRowCount = mergedContent.trim().split('\n').length - 1
-  if (mergedRowCount <= 0) return []
-
-  const xlsxPath = await runClean(teamDir, mergedPath)
-  if (!xlsxPath) return []
-
-  return parseXlsx(xlsxPath, team.team_id, batchId)
+  const merged = mergeAgents(webAgents, zillowAgents)
+  console.log(`[run-contacts] ${team.team_name}: web=${webAgents.length} zillow=${zillowAgents.length} merged=${merged.length}`)
+  return merged
 }
 
 export async function POST(request: NextRequest) {
@@ -243,7 +190,6 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Failed to fetch teams' }, { status: 500 })
   }
 
-  // Mark unqualified teams skipped
   await supabaseAdmin.rpc('ce_skip_unqualified_teams', { p_batch_id: batch_id })
 
   const qualifiedTeams = (teams ?? []) as QualifiedTeam[]
@@ -262,17 +208,15 @@ export async function POST(request: NextRequest) {
     p_status: 'enriching_contacts',
   })
 
-  const batchTmpDir = path.join('/tmp', `enrich-${batch_id}`)
   let hasError = false
   let totalAgentsWritten = 0
   const debugErrors: string[] = []
 
   for (const team of qualifiedTeams) {
-    const teamDir = path.join(batchTmpDir, team.team_id)
-    console.log(`[run-contacts] processing team ${team.team_name} (${team.team_id}) zillow_valid=${team.zillow_valid} web_valid=${team.web_valid}`)
+    console.log(`[run-contacts] processing ${team.team_name} (${team.team_id}) web_valid=${team.web_valid} zillow_valid=${team.zillow_valid}`)
     try {
-      const agents = await enrichTeam(team, batch_id, teamDir)
-      console.log(`[run-contacts] enrichTeam returned ${agents.length} agents for ${team.team_name}`)
+      const agents = await enrichTeam(team, batch_id)
+      console.log(`[run-contacts] ${team.team_name}: ${agents.length} agents to insert`)
 
       if (agents.length > 0) {
         const { error: insertErr } = await supabaseAdmin.rpc('ce_insert_agents_bulk', {
@@ -318,13 +262,6 @@ export async function POST(request: NextRequest) {
     p_stage: finalStage,
     p_status: 'complete',
   })
-
-  // Cleanup temp files on success only
-  if (!hasError) {
-    await fs.rm(batchTmpDir, { recursive: true, force: true }).catch(e => {
-      console.error('[run-contacts] cleanup failed:', (e as Error).message)
-    })
-  }
 
   return Response.json({ data: { batch_id, processed: qualifiedTeams.length, agents_written: totalAgentsWritten, has_error: hasError, errors: debugErrors } })
 }
