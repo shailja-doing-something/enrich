@@ -1,5 +1,19 @@
 # Release Notes
 
+## [0.9.8] — 2026-05-20 — Fix contact count: store name-only agents from Zillow
+
+### Fixed
+- `supabase/migrations/20260520010000_fix_ce_insert_agents_bulk.sql` — `ce_insert_agents_bulk` was filtering `WHERE email IS NOT NULL AND email <> ''`, silently dropping all agents extracted from Zillow (which returns names and phones but not email addresses); changed filter to accept any agent with a non-empty `first_name`, `last_name`, OR `email`; added `ON CONFLICT (team_id, COALESCE(lower(first_name),''), COALESCE(lower(last_name),'')) DO NOTHING` for safe re-runs; changed return type from `void` to `int` (actual inserted count)
+- `app/api/company-enrichment/run-contacts/route.ts` — `totalAgentsWritten` counter now uses the actual count returned by the RPC instead of `agents.length` (which counted all agents including those that were DO NOTHING'd or filtered)
+
+### Root cause
+`extract-team-data` extracts agent names from Zillow pages but not email addresses (Zillow does not expose agent emails). All 9 of 10 agents per team had names only — all were silently dropped by the email-only filter. Only the rare agents who had listed their email in their Zillow profile (1 of 10 per team) were inserted. Result: 2 agents for a 10-team batch. After fix: 70 agents.
+
+### Result
+Batch `080b163d` (10 teams): 2 → 70 agents. Email coverage: 4 agents have email addresses (from team websites and agent profiles); remaining 66 have names and are available for cross-referencing.
+
+---
+
 ## [0.9.7] — 2026-05-20 — Contact enrichment: replace Python subprocess chain with Edge Function calls
 
 ### Fixed

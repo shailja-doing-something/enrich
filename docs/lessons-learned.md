@@ -2,6 +2,12 @@
 
 ## Gotchas
 
+### Zillow scraping returns names only — email-gating the INSERT silently drops all agents
+The `extract-team-data` Edge Function extracts agent names from Zillow team pages but NOT emails (Zillow does not expose agent email addresses). If the bulk-insert RPC filters `WHERE email IS NOT NULL`, every Zillow-sourced agent is silently dropped. The `totalAgentsWritten` counter still increments (it uses `agents.length`, not the actual DB insert count), so the route response logs a non-zero count while the DB has 0. Fix: filter by `name IS NOT NULL OR email IS NOT NULL OR phone IS NOT NULL` (any identifying field), add `ON CONFLICT DO NOTHING`, and return the actual inserted count from the RPC.
+
+### `ce_insert_agents_bulk` return type change requires DROP before CREATE OR REPLACE
+PostgreSQL does not allow `CREATE OR REPLACE FUNCTION` to change the return type of an existing function. Changing from `void` to `int` requires `DROP FUNCTION IF EXISTS ce_insert_agents_bulk(jsonb)` first. Always include the DROP in the migration when changing return types.
+
 ### Pipeline re-enable: keep `approval_status` writes when restoring `status: 'generating'`
 When the pipeline was stripped in 0.6.0, `approval_status`/`approved_at` writes were added and `status: 'generating'` was removed. On restore, both sets of writes must coexist in the same `updateJob` call — the approval columns are kept for auditability and the APPROVED fallback UI. Do not remove approval writes just because the pipeline is running again.
 
