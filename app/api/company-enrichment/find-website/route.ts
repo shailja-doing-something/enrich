@@ -1,7 +1,5 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import { spawn } from 'child_process'
-import path from 'path'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { env } from '@/lib/env'
 
@@ -14,59 +12,79 @@ type TeamRow = {
   location: string | null
 }
 
-function callFindWebsite(team: TeamRow): Promise<string> {
-  return new Promise((resolve) => {
-    const scriptPath = path.join(process.cwd(), 'scripts', 'find_website.py')
-    const proc = spawn('python3', [scriptPath], {
-      env: {
-        ...process.env,
-        ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
-        OXYLABS_USERNAME: env.OXYLABS_USERNAME,
-        OXYLABS_PASSWORD: env.OXYLABS_PASSWORD,
-      },
-    })
-
-    const timer = setTimeout(() => { proc.kill(); resolve('') }, 60_000)
-
-    let stdout = ''
-    let stderr = ''
-    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-
-    proc.stdin.write(JSON.stringify({
-      team_name: team.team_name ?? '',
-      brokerage: team.brokerage ?? '',
-      location: team.location ?? '',
-    }))
-    proc.stdin.end()
-
-    proc.on('close', (code) => {
-      clearTimeout(timer)
-      if (stderr.trim()) {
-        console.error(`[find-website] ${team.team_name} stderr: ${stderr.trim()}`)
+type OxylabsResponse = {
+  results?: Array<{
+    content?: {
+      results?: {
+        organic?: Array<{ url?: string }>
       }
-      if (code !== 0) {
-        console.error(`[find-website] ${team.team_name}: script exited ${code}`)
-        resolve('')
-        return
-      }
-      try {
-        const result = JSON.parse(stdout.trim()) as { website?: string }
-        const website = result.website ?? ''
-        console.log(`[find-website] ${team.team_name}: ${website || 'not found'}`)
-        resolve(website)
-      } catch {
-        console.error(`[find-website] ${team.team_name}: invalid script output: ${stdout.trim()}`)
-        resolve('')
-      }
-    })
+    }
+  }>
+}
 
-    proc.on('error', (err) => {
-      clearTimeout(timer)
-      console.error(`[find-website] ${team.team_name}: spawn error: ${err.message}`)
-      resolve('')
+type OpenRouterResponse = {
+  choices?: Array<{ message?: { content?: string } }>
+}
+
+async function searchGoogle(query: string): Promise<string[]> {
+  const creds = Buffer.from(`${env.OXYLABS_USERNAME}:${env.OXYLABS_PASSWORD}`).toString('base64')
+  try {
+    const resp = await fetch('https://realtime.oxylabs.io/v1/queries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${creds}` },
+      body: JSON.stringify({ source: 'google_search', query, pages: 1, limit: 5, parse: true }),
+      signal: AbortSignal.timeout(30_000),
     })
-  })
+    if (!resp.ok) {
+      console.error(`[find-website] Oxylabs ${resp.status}: ${await resp.text().catch(() => '')}`)
+      return []
+    }
+    const data = await resp.json() as OxylabsResponse
+    const organic = data.results?.[0]?.content?.results?.organic ?? []
+    return organic.map(r => r.url).filter((u): u is string => Boolean(u))
+  } catch (err) {
+    console.error(`[find-website] Oxylabs SERP error: ${(err as Error).message}`)
+    return []
+  }
+}
+
+async function pickWithClaude(teamName: string, brokerage: string, location: string, candidates: string[]): Promise<string> {
+  const candidateList = candidates.map(u => `- ${u}`).join('\n')
+  const prompt = `Real estate team: ${teamName}\nBrokerage: ${brokerage}\nLocation: ${location}\n\nWhich of these URLs is the team's official website?\n${candidateList}\n\nReply with ONLY the URL, or "none" if none match.`
+  try {
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.ANTHROPIC_API_KEY}` },
+      body: JSON.stringify({
+        model: 'anthropic/claude-haiku',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 100,
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (!resp.ok) {
+      console.error(`[find-website] OpenRouter ${resp.status}: ${await resp.text().catch(() => '')}`)
+      return candidates[0] ?? ''
+    }
+    const data = await resp.json() as OpenRouterResponse
+    const answer = (data.choices?.[0]?.message?.content ?? '').trim()
+    if (answer.toLowerCase() === 'none') return ''
+    const urls = answer.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/g) ?? []
+    return urls[0]?.replace(/[.,)]+$/, '') ?? ''
+  } catch (err) {
+    console.error(`[find-website] OpenRouter error: ${(err as Error).message}`)
+    return candidates[0] ?? ''
+  }
+}
+
+async function callFindWebsite(team: TeamRow): Promise<string> {
+  if (!team.team_name) return ''
+  const query = `"${team.team_name}" ${team.brokerage ?? ''} ${team.location ?? ''} real estate team`
+  const candidates = await searchGoogle(query)
+  if (candidates.length === 0) return ''
+  if (candidates.length === 1) return candidates[0]
+  return pickWithClaude(team.team_name, team.brokerage ?? '', team.location ?? '', candidates.slice(0, 5))
 }
 
 export async function POST(request: NextRequest) {
