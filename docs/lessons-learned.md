@@ -67,6 +67,15 @@ Skipping teams with `null website_url` in verify-urls means those teams never ge
 ### Classification and report are computed at confirm time, not at detect time
 `classifyListType` and `buildColumnMappingReport` run in `save-and-run` (confirm route), not in `detectColumnMapping`. This is intentional: the user may adjust the mapping before confirming, so classification must reflect the final confirmed mapping, not Gemini's initial output.
 
+### Zillow scoring above 1.0 signals old code is deployed — `_relevance` is not normalized
+The Zillow search API returns a `_relevance` field that is NOT bounded to [0,1] — values like 1.2 are common. If the scoring formula uses `_relevance` as a multiplier or addend directly, results can exceed 1.0. A score >1.0 in logs means the old formula is running. The new formula uses only `nameScore * 0.60 + brokerageBonus + cityBonus` (max = 1.00); scores >1.0 are a deploy check signal.
+
+### Hard-reject all three cases before scoring, or the formula compensates for the reject
+When state matches, brokerage matches, AND city matches, a very weak name similarity (nameScore ≈ 0.43) can push a result over the ACCEPT_THRESHOLD (0.60 formula: 0.43×0.60 + 0.25 + 0.15 = 0.658). This is the right trade-off — if you know the team is in the same city and same chain, a fuzzy-enough name is plausible. The hard-reject floor (MIN_NAME_SCORE=0.35) prevents completely unrelated names from gaming the bonuses. Names below 0.35 are rejected regardless of chain/city match.
+
+### `brokerage=` param causes Zillow API statement timeouts — score client-side instead
+Sending `brokerage=` to the Zillow `/api/agents/search` endpoint consistently causes backend timeouts (>8s, sometimes up to 30s). Never send it. Receive all results matching the team name, then score brokerage chain client-side via BROKERAGE_CHAIN_PATTERNS normalization.
+
 ## Decisions
 
 ### Proxy pattern for Supabase clients

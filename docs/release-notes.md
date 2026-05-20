@@ -1,5 +1,21 @@
 # Release Notes
 
+## [0.9.9] — 2026-05-20 — Rewrite Zillow URL matching with hard-reject scoring
+
+### Changed
+- `app/api/company-enrichment/find-zillow-url/route.ts` — completely rewrote scoring algorithm; old formula (`nameScore×0.7 + apiRelevance×0.3 + locationBonus`) had threshold 0.30 and no hard rejects, producing 18/18 false positives in audit; new formula `nameScore×0.60 + brokerageBonus×0.25 + cityBonus×0.15` with three hard-reject rules: (1) state mismatch → score 0, (2) known brokerage chain mismatch → score 0, (3) name score below 0.35 floor → score 0; thresholds raised to ACCEPT=0.60, HIGH=0.80; `brokerage` field now destructured and used in scoring (was silently dropped before)
+- Added `parseLocation()` extracting both city AND state from "Denver CO" / "Austin, TX" format; Strategy B (city+state geofenced) fires first with 8s timeout, Strategy A (no geo, state hard-rejected client-side) is fallback
+- Added `BROKERAGE_CHAIN_PATTERNS` mapping 16+ variant names to 10 canonical chain IDs (`kw`, `remax`, `coldwellbanker`, `compass`, `c21`, `bhhs`, `exp`, `sothebys`, `ev`, `howardhanna`); `chainVote()` returns `match`/`mismatch`/`unknown` — only `mismatch` triggers hard-reject (unknown = both sides unrecognized brokerage, treated as neutral)
+- Removed `brokerage=` param from all API requests — it causes Zillow API statement timeouts; chain scoring done entirely client-side
+
+### Audit findings (pre-fix)
+Batch `080b163d` (10 teams): old algorithm returned results for all 10 where all were wrong (state/brokerage/name mismatches). With new algorithm: 9/10 correctly NONE (all candidates state-rejected, `best=0.00`); 1/10 borderline LOW confidence match (fuzzy name similarity, same state + chain).
+
+### Hard-reject verification
+- `best=0.00` in logs → all 10 API candidates were state- or chain- or name-floor-rejected before scoring
+- `best=0.50` → candidates passed hard-rejects but fell short of ACCEPT_THRESHOLD (0.60)
+- `score=0.66, confidence=low` → accepted match, but LOW confidence flags it for human review
+
 ## [0.9.8] — 2026-05-20 — Fix contact count: store name-only agents from Zillow
 
 ### Fixed
