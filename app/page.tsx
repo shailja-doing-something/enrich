@@ -164,7 +164,7 @@ export default function DashboardPage() {
   type ZfResultRow = {
     mad_id: string; team_name: string; brokerage: string; location: string
     zillow_url: string | null; match_score: number; matched_name: string | null
-    rejection_reason?: string
+    source: string; rejection_reason?: string
   }
   const [zfFile, setZfFile] = useState<File | null>(null)
   const [zfRunning, setZfRunning] = useState(false)
@@ -549,7 +549,7 @@ export default function DashboardPage() {
   }
 
   function downloadZfCsv(results: ZfResultRow[]) {
-    const header = 'MAD_ID,Team Name,Brokerage,Location,Zillow URL,Match Score,Matched Name'
+    const header = 'MAD_ID,Team Name,Brokerage,Location,Zillow URL,Match Score,Matched Name,Source'
     const escape = (v: string) => `"${v.replace(/"/g, '""')}"`
     const lines = results.map(r =>
       [
@@ -560,6 +560,7 @@ export default function DashboardPage() {
         escape(r.zillow_url ?? ''),
         String(r.match_score),
         escape(r.matched_name ?? ''),
+        escape(r.source ?? ''),
       ].join(',')
     )
     const csv = [header, ...lines].join('\n')

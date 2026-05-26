@@ -1,5 +1,25 @@
 # Release Notes
 
+## [0.9.16] — 2026-05-26 — Hybrid Zillow lookup: local table first, external API fallback
+
+### Changed
+- `lib/enrichment/zillowMatcher.ts` — added `searchLocalTable()`: queries `staging.zillow_agent_profiles` (781k rows) via new `ce_search_zillow_candidates` RPC filtered by state + `is_team=true`; returns `ZillowResult[]` for app-side scoring; any RPC error falls through to API silently
+- Same file — `findZillowUrl()` now tries local table before external API when state is known; if table yields no match above gates, falls back to API; if no state is parseable, skips table and goes straight to API
+- Same file — fixed scoring bug: `business_name` removed from `Math.max()` in name scoring; `business_name` is the brokerage affiliation and must never be scored against the team name; name scoring now uses only `team_name` and `full_name`
+- Same file — `displayName` order fixed: `team_name ?? full_name ?? business_name`; previously `team_name ?? business_name ?? full_name` put the brokerage before the display name
+- Same file — `ZillowResult` type extended with `team_size?: number | null`; `isTeamRecord` updated to check `team_size > 1`
+- Same file — `attemptSearch` and `searchWithFallback` now accept `state: string | null`; when state is null the `state=` param is omitted from the API request
+- Same file — `FindZillowResult` adds `source: 'table' | 'api' | 'none'`; `rejection_reason` removes `no_state` (no-state rows now try API instead of hard-rejecting)
+- Same file — scoring logic extracted into `scoreAndPick()` helper used by both table and API paths; one scorer for both sources
+- `app/api/zillow-finder/run/route.ts` — `ResultRow` extended with `source: string`
+- `app/page.tsx` — `ZfResultRow` extended with `source`; CSV download adds `Source` column
+
+### Added
+- `supabase/migrations/20260526100000_ce_search_zillow_candidates.sql` — `ce_search_zillow_candidates(p_state, p_is_team)` SECURITY DEFINER RPC; filters `staging.zillow_agent_profiles` by state and `is_team` flag; `LIMIT 2000` caps the result set; **must be applied in Supabase dashboard**
+
+### Schema changes (apply in Supabase dashboard)
+Run `supabase/migrations/20260526100000_ce_search_zillow_candidates.sql`
+
 ## [0.9.14] — 2026-05-26 — Standalone Zillow URL finder + shared matcher module + staging table migration
 
 ### Added

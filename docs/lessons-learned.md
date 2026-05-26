@@ -2,6 +2,12 @@
 
 ## Gotchas
 
+### staging.zillow_agent_profiles has no trigram index — filter by is_team first, score app-side
+The table has 781k rows with only BTREE indexes on `full_name`, `team_name`, `is_team`, `email`, etc. — no pg_trgm GIN index. Fuzzy name queries with `LIKE '%name%'` would do sequential scans. The practical query strategy: filter `is_team = true AND address_state = $state` using the `is_team` index (reduces to ~45k team records), then filter by state (no state index, ~900/state), return up to 2000, score entirely in TypeScript using the same `scoreAndPick` logic used for API results. This is fast enough and consistent — one scorer for both sources.
+
+### Zillow `team_name` is only 6.3% populated — `full_name` is the reliable name field
+In `staging.zillow_agent_profiles`, `team_name` is only set on ~49k of 781k rows. `full_name` (99.9% populated) is the agent's public display name and frequently contains the actual team name. Scoring must use BOTH: `Math.max(calcNameScore(input, r.team_name ?? ''), calcNameScore(input, r.full_name ?? ''))`. Relying on `team_name` alone misses the majority of team profiles.
+
 ### Zillow scraping returns names only — email-gating the INSERT silently drops all agents
 The `extract-team-data` Edge Function extracts agent names from Zillow team pages but NOT emails (Zillow does not expose agent email addresses). If the bulk-insert RPC filters `WHERE email IS NOT NULL`, every Zillow-sourced agent is silently dropped. The `totalAgentsWritten` counter still increments (it uses `agents.length`, not the actual DB insert count), so the route response logs a non-zero count while the DB has 0. Fix: filter by `name IS NOT NULL OR email IS NOT NULL OR phone IS NOT NULL` (any identifying field), add `ON CONFLICT DO NOTHING`, and return the actual inserted count from the RPC.
 
