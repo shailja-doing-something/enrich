@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     p_total_rows: rowCount,
   })
   if (batchErr) {
-    console.error(batchErr.message)
+    console.error('ce_create_batch failed:', JSON.stringify(batchErr))
     return Response.json({ error: 'Failed to create batch' }, { status: 500 })
   }
 
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     p_teams: teams,
   })
   if (teamsErr) {
-    console.error(teamsErr.message)
+    console.error('ce_insert_teams failed:', JSON.stringify(teamsErr))
     return Response.json({ error: 'Failed to insert teams' }, { status: 500 })
   }
 

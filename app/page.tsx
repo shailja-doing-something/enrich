@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import Papa from 'papaparse'
 import type { EnrichJob } from '@/lib/supabase/types'
 
 type CompanyBatch = {
@@ -158,6 +159,19 @@ export default function DashboardPage() {
   const [teamsEnriched, setTeamsEnriched] = useState<number | null>(null)
   const [deletingBatchIds, setDeletingBatchIds] = useState<Set<string>>(new Set())
   const deletingBatchIdsRef = useRef<Set<string>>(new Set())
+
+  // Zillow URL Finder (standalone)
+  type ZfResultRow = {
+    mad_id: string; team_name: string; brokerage: string; location: string
+    zillow_url: string | null; match_score: number; matched_name: string | null
+    rejection_reason?: string
+  }
+  const [zfFile, setZfFile] = useState<File | null>(null)
+  const [zfRunning, setZfRunning] = useState(false)
+  const [zfError, setZfError] = useState<string | null>(null)
+  const [zfProgress, setZfProgress] = useState(0)
+  const [zfTotal, setZfTotal] = useState(0)
+  const [zfResults, setZfResults] = useState<ZfResultRow[] | null>(null)
 
   const addDeleting = (id: string) => {
     deletingIdsRef.current.add(id)
@@ -464,6 +478,100 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleZfSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!zfFile) {
+      setZfError('Please select a CSV file')
+      return
+    }
+    setZfError(null)
+    setZfResults(null)
+    setZfProgress(0)
+
+    const text = await zfFile.text()
+    const parsed = Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true })
+
+    const REQUIRED = ['MAD_ID', 'Team Name', 'Brokerage', 'Location']
+    const headers = Object.keys(parsed.data[0] ?? {})
+    const missing = REQUIRED.filter(c => !headers.includes(c))
+    if (missing.length > 0) {
+      setZfError(`CSV is missing required columns: ${missing.join(', ')}`)
+      return
+    }
+
+    const allRows = parsed.data.map(r => ({
+      mad_id: r['MAD_ID'] ?? '',
+      team_name: r['Team Name'] ?? '',
+      brokerage: r['Brokerage'] ?? '',
+      location: r['Location'] ?? '',
+    }))
+
+    setZfTotal(allRows.length)
+    setZfRunning(true)
+
+    const BATCH = 5
+    const accumulated: ZfResultRow[] = []
+
+    try {
+      for (let i = 0; i < allRows.length; i += BATCH) {
+        const chunk = allRows.slice(i, i + BATCH)
+        const res = await fetch('/api/zillow-finder/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: chunk }),
+        })
+        const json: unknown = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          const msg = (typeof json === 'object' && json !== null && 'error' in json)
+            ? String((json as Record<string, unknown>).error)
+            : `Server error (${res.status})`
+          setZfError(msg)
+          return
+        }
+        const results = (
+          typeof json === 'object' && json !== null &&
+          'data' in json &&
+          typeof (json as Record<string, unknown>).data === 'object' &&
+          (json as Record<string, unknown>).data !== null &&
+          'results' in ((json as Record<string, unknown>).data as object)
+        )
+          ? ((json as { data: { results: ZfResultRow[] } }).data.results)
+          : []
+        accumulated.push(...results)
+        setZfProgress(Math.min(i + BATCH, allRows.length))
+      }
+      setZfResults(accumulated)
+    } catch {
+      setZfError('Network error — could not reach the server')
+    } finally {
+      setZfRunning(false)
+    }
+  }
+
+  function downloadZfCsv(results: ZfResultRow[]) {
+    const header = 'MAD_ID,Team Name,Brokerage,Location,Zillow URL,Match Score,Matched Name'
+    const escape = (v: string) => `"${v.replace(/"/g, '""')}"`
+    const lines = results.map(r =>
+      [
+        escape(r.mad_id),
+        escape(r.team_name),
+        escape(r.brokerage),
+        escape(r.location),
+        escape(r.zillow_url ?? ''),
+        String(r.match_score),
+        escape(r.matched_name ?? ''),
+      ].join(',')
+    )
+    const csv = [header, ...lines].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `zillow-finder-results-${Date.now()}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <main className="max-w-5xl mx-auto px-4 py-10">
       <h1 className="text-2xl font-semibold mb-8">Enrich</h1>
@@ -766,6 +874,73 @@ export default function DashboardPage() {
           })}
         </div>
       )}
+
+      <hr className="my-10 border-gray-200" />
+
+      <h2 className="text-xl font-semibold mb-1">Zillow URL Finder (standalone)</h2>
+      <p className="text-sm text-gray-500 mb-1">
+        Upload a CSV of teams. Get back the same CSV with matched Zillow profile URLs. Nothing is saved.
+      </p>
+      <p className="mb-4 text-xs text-gray-400">Required columns: MAD_ID, Team Name, Brokerage, Location</p>
+
+      <form onSubmit={handleZfSubmit} className="mb-6">
+        <div className="flex items-center gap-3">
+          <label className="cursor-pointer rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 whitespace-nowrap">
+            {zfFile ? zfFile.name : 'Choose file…'}
+            <input
+              type="file"
+              accept=".csv"
+              className="sr-only"
+              onChange={(e) => {
+                setZfFile(e.target.files?.[0] ?? null)
+                setZfError(null)
+                setZfResults(null)
+                setZfProgress(0)
+                setZfTotal(0)
+              }}
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={zfRunning || !zfFile}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {zfRunning ? 'Running…' : 'Find Zillow URLs'}
+          </button>
+        </div>
+        {zfError && <p className="mt-2 text-sm text-red-600">{zfError}</p>}
+      </form>
+
+      {zfRunning && zfTotal > 0 && (
+        <div className="mb-4">
+          <p className="text-sm text-gray-600 mb-1">
+            Processing row {Math.min(zfProgress + 5, zfTotal)} of {zfTotal}…
+          </p>
+          <div className="w-full max-w-sm bg-gray-100 rounded-full h-2 overflow-hidden">
+            <div
+              className="h-2 bg-blue-500 rounded-full transition-all"
+              style={{ width: `${zfTotal > 0 ? (zfProgress / zfTotal) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {zfResults !== null && !zfRunning && (() => {
+        const matched = zfResults.filter(r => r.zillow_url).length
+        return (
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-gray-600">
+              Matched: <span className="font-medium">{matched} / {zfResults.length}</span> teams
+            </span>
+            <button
+              onClick={() => downloadZfCsv(zfResults)}
+              className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+            >
+              Download results CSV
+            </button>
+          </div>
+        )
+      })()}
     </main>
   )
 }
