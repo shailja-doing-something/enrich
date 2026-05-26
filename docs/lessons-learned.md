@@ -2,6 +2,9 @@
 
 ## Gotchas
 
+### Zillow `business_name` is the brokerage, not the team name — never include in name scoring
+Zillow result objects have three name fields: `team_name` (often the lead agent's personal name), `full_name` (the public profile display name, usually the actual team name), and `business_name` (the brokerage/company affiliation). If `business_name` is included in the `Math.max()` name-score calculation, any team whose input name matches a brokerage name scores 100 — the name score of 70 plus a brokerage bonus of 30 — for every agent at that brokerage regardless of whether they are on the right team. Example: "Barrett Real Estate" as both an input team name and a brokerage affiliation → every agent at Barrett scores 100 → false positives for the entire dataset. Fix: score only `team_name` and `full_name` for name similarity; keep `business_name` exclusively for brokerage chain scoring.
+
 ### Zillow scraping returns names only — email-gating the INSERT silently drops all agents
 The `extract-team-data` Edge Function extracts agent names from Zillow team pages but NOT emails (Zillow does not expose agent email addresses). If the bulk-insert RPC filters `WHERE email IS NOT NULL`, every Zillow-sourced agent is silently dropped. The `totalAgentsWritten` counter still increments (it uses `agents.length`, not the actual DB insert count), so the route response logs a non-zero count while the DB has 0. Fix: filter by `name IS NOT NULL OR email IS NOT NULL OR phone IS NOT NULL` (any identifying field), add `ON CONFLICT DO NOTHING`, and return the actual inserted count from the RPC.
 

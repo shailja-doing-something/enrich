@@ -47,10 +47,11 @@ const CHAIN_PATTERNS: Array<readonly [RegExp, string]> = [
 export type ZillowResult = {
   profile_link: string
   team_name?: string | null
-  business_name?: string | null
+  business_name?: string | null  // this is the brokerage name, not the team — do NOT use for name scoring
   full_name?: string | null
   address_state?: string | null
   is_team?: boolean
+  team_size?: number | null
 }
 
 type ZillowApiResponse = {
@@ -58,10 +59,15 @@ type ZillowApiResponse = {
   results: ZillowResult[]
 }
 
+export type MatchConfidence = 'high' | 'medium' | 'low' | 'none'
+export type MatchType = 'team' | 'individual_agent' | 'none'
+
 export type FindZillowResult = {
   zillow_url: string | null
   match_score: number
   matched_name: string | null
+  match_confidence: MatchConfidence
+  match_type: MatchType
   rejection_reason?: 'no_state' | 'no_results' | 'below_threshold' | 'chain_mismatch' | 'api_timeout'
 }
 
@@ -126,14 +132,12 @@ export function calcBrokerageScore(inputBrokerage: string, resultBusiness: strin
   return 0
 }
 
-// Hard-reject solo agent records before scoring.
-// A result qualifies as a team record if any of these are true:
-//   • is_team flag is explicitly true
-//   • has a team_name field (only populated on team profiles)
-//   • business_name contains "team" or "group" (common for unlabeled team brokerages)
+// A result is a team record if it has any team indicators.
+// Used to classify match_type — no longer used to hard-reject candidates.
 export function isTeamRecord(r: ZillowResult): boolean {
   if (r.is_team) return true
   if (r.team_name && r.team_name.trim()) return true
+  if (r.team_size !== undefined && r.team_size !== null && r.team_size > 1) return true
   if (/\b(team|group)\b/i.test(r.business_name ?? '')) return true
   return false
 }
@@ -145,18 +149,99 @@ function extractChain(s: string): string | null {
   return null
 }
 
+// Confidence rules (applied after a match is accepted):
+//   high   → score ≥ 75 AND result is a team record AND state was known
+//   medium → score 60–74 AND team, OR score ≥ 75 AND solo/no-state
+//   low    → everything else that cleared ACCEPT_THRESHOLD
+function calcConfidence(
+  score: number,
+  isTeam: boolean,
+  noState: boolean
+): 'high' | 'medium' | 'low' {
+  if (noState) return 'low'
+  if (score >= 75 && isTeam) return 'high'
+  if (score >= 60 && isTeam) return 'medium'
+  if (score >= 75) return 'medium'   // solo agent with strong name match
+  return 'low'
+}
+
+type ScoredResult = {
+  result: ZillowResult
+  total: number
+  ns: number
+  bs: number
+  displayName: string
+}
+
+type GateOutcome =
+  | { match: ScoredResult; rejectionReason: undefined }
+  | { match: null; rejectionReason: 'no_results' | 'below_threshold' | 'chain_mismatch' }
+
+// Score all candidates and return the best one that clears all gates, or null.
+// KEY FIX: name is scored only against team_name and full_name.
+// business_name is the brokerage field — scoring team names against it causes
+// false 100s whenever the input team name happens to match a brokerage name.
+function bestScoredMatch(
+  results: ZillowResult[],
+  teamName: string,
+  brokerage: string
+): GateOutcome {
+  if (results.length === 0) return { match: null, rejectionReason: 'no_results' }
+
+  const scored: ScoredResult[] = results.map(r => {
+    // business_name intentionally excluded from name scoring — it is the brokerage
+    const ns = Math.max(
+      calcNameScore(teamName, r.team_name ?? ''),
+      calcNameScore(teamName, r.full_name ?? '')
+    )
+    const bs = calcBrokerageScore(brokerage, r.business_name ?? '')
+    const displayName = r.team_name ?? r.full_name ?? r.business_name ?? ''
+    return { result: r, total: ns + bs, ns, bs, displayName }
+  })
+  scored.sort((a, b) => b.total - a.total)
+
+  console.log(`[Zillow]   Top ${Math.min(3, scored.length)} candidates:`)
+  scored.slice(0, 3).forEach((s, i) => {
+    console.log(
+      `[Zillow]     ${i + 1}. "${s.displayName}" | brok="${s.result.business_name ?? ''}" | ` +
+      `score=${s.total} (name=${s.ns}, brok=${s.bs}) isTeam=${isTeamRecord(s.result)}`
+    )
+  })
+
+  const best = scored[0]
+
+  if (best.ns < MIN_NAME_SCORE) {
+    console.log(`[Zillow]   Best name score ${best.ns} < MIN_NAME_SCORE ${MIN_NAME_SCORE} — rejected`)
+    return { match: null, rejectionReason: 'below_threshold' }
+  }
+
+  const inputChain = extractChain(brokerage)
+  const resultChain = extractChain(best.result.business_name ?? '')
+  if (inputChain && resultChain && inputChain !== resultChain) {
+    console.log(`[Zillow]   Chain mismatch: ${inputChain} vs ${resultChain} — rejected`)
+    return { match: null, rejectionReason: 'chain_mismatch' }
+  }
+
+  if (best.total < ACCEPT_THRESHOLD) {
+    console.log(`[Zillow]   Total ${best.total} < ACCEPT_THRESHOLD ${ACCEPT_THRESHOLD} — rejected`)
+    return { match: null, rejectionReason: 'below_threshold' }
+  }
+
+  return { match: best, rejectionReason: undefined }
+}
+
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 // Single search pass with up to 3 attempts (1s / 3s backoff) on 5xx or network error.
-// Returns { results, timedOut: true } only after all retries are exhausted on 5xx.
 async function attemptSearch(
   q: string,
-  state: string,
+  state: string | null,
   apiKey: string,
   withIsTeam: boolean,
   passLabel: string
 ): Promise<{ results: ZillowResult[]; timedOut: boolean }> {
-  const params = new URLSearchParams({ q, state, full_profile: 'true', limit: '20' })
+  const params = new URLSearchParams({ q, full_profile: 'true', limit: '20' })
+  if (state) params.set('state', state)
   if (withIsTeam) params.set('is_team', 'true')
   const url = `${ZILLOW_SEARCH_URL}?${params.toString()}`
   const headers = { 'x-api-key': apiKey }
@@ -176,7 +261,7 @@ async function attemptSearch(
         `[Zillow]   ${passLabel}: HTTP ${resp.status} (attempt ${attempt}/3)` +
         (body ? ` — ${body.slice(0, 100)}` : '')
       )
-      if (resp.status < 500) return { results: [], timedOut: false }  // 4xx won't recover
+      if (resp.status < 500) return { results: [], timedOut: false }
       if (attempt === 3) return { results: [], timedOut: true }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -187,28 +272,25 @@ async function attemptSearch(
   return { results: [], timedOut: true }
 }
 
-// Cascade: sanitized name → name+brokerage → core token.
-// Falls through to next pass only on 5xx/timeout; stops on 0 results (legitimate empty).
+// Three-pass cascade (sanitized name → name+brokerage → core token).
+// Falls through to next pass only on 5xx/timeout; stops on legitimate 0 results.
 async function searchWithFallback(
   teamName: string,
   brokerage: string,
-  state: string,
+  state: string | null,
   apiKey: string,
   withIsTeam: boolean
 ): Promise<{ results: ZillowResult[]; apiTimeout: boolean }> {
   const sanitized = sanitizeQuery(teamName)
   const label = withIsTeam ? '' : ' (no is_team)'
 
-  // Pass 1: sanitized team name
   const r1 = await attemptSearch(sanitized, state, apiKey, withIsTeam, `Pass 1 (name${label})`)
   if (!r1.timedOut) return { results: r1.results, apiTimeout: false }
 
-  // Pass 2: sanitized name + brokerage — different query path in API
   const q2 = brokerage ? `${sanitized} ${sanitizeQuery(brokerage)}` : sanitized
   const r2 = await attemptSearch(q2, state, apiKey, withIsTeam, `Pass 2 (name+brokerage${label})`)
   if (!r2.timedOut) return { results: r2.results, apiTimeout: false }
 
-  // Pass 3: core distinctive token only
   const core = coreToken(teamName)
   const r3 = await attemptSearch(core, state, apiKey, withIsTeam, `Pass 3 (core token "${core}"${label})`)
   if (!r3.timedOut) return { results: r3.results, apiTimeout: false }
@@ -223,93 +305,77 @@ export async function findZillowUrl(input: {
 }): Promise<FindZillowResult> {
   const { team_name, brokerage, location } = input
   const state = parseState(location)
+  const noState = state === null
 
-  if (!state) {
-    console.log(`[Zillow] ${team_name} | ${brokerage} | (no state) — skipping`)
-    console.log(`[Zillow]   Decision: REJECTED — no_state`)
-    return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_state' }
+  if (noState) {
+    console.log(`[Zillow] ${team_name} | no parseable state in "${location}" — attempting without state filter`)
+  } else {
+    console.log(`[Zillow] ${team_name} (${state}) — attempting search`)
   }
-
-  console.log(`[Zillow] ${team_name} (${state}) — attempting search`)
 
   const apiKey = env.ZILLOW_ZIP_API_KEY
 
-  // Primary: is_team=true
+  // PRIMARY: is_team=true
   const primary = await searchWithFallback(team_name, brokerage, state, apiKey, true)
   if (primary.apiTimeout) {
-    console.log(`[Zillow]   Decision: REJECTED — api_timeout`)
-    return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'api_timeout' }
+    console.log(`[Zillow]   Decision: REJECTED — api_timeout (primary)`)
+    return { zillow_url: null, match_score: 0, matched_name: null, match_confidence: 'none', match_type: 'none', rejection_reason: 'api_timeout' }
   }
 
-  let results = primary.results
-
-  // Secondary: some teams aren't tagged is_team in Zillow
-  if (results.length === 0) {
-    const secondary = await searchWithFallback(team_name, brokerage, state, apiKey, false)
-    if (secondary.apiTimeout) {
-      console.log(`[Zillow]   Decision: REJECTED — api_timeout`)
-      return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'api_timeout' }
+  const primaryOutcome = bestScoredMatch(primary.results, team_name, brokerage)
+  if (primaryOutcome.match) {
+    const m = primaryOutcome.match
+    const isTeam = isTeamRecord(m.result)
+    const conf = calcConfidence(m.total, isTeam, noState)
+    console.log(`[Zillow]   Decision: ACCEPTED (primary) ${m.result.profile_link} — score=${m.total} conf=${conf} type=${isTeam ? 'team' : 'individual_agent'}`)
+    return {
+      zillow_url: m.result.profile_link,
+      match_score: m.total,
+      matched_name: m.displayName,
+      match_confidence: conf,
+      match_type: isTeam ? 'team' : 'individual_agent',
     }
-    results = secondary.results
   }
 
-  if (results.length === 0) {
-    console.log(`[Zillow]   Decision: REJECTED — no_results`)
-    return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_results' }
+  // FALLBACK: no is_team filter — runs even when primary returned results that failed gates
+  console.log(`[Zillow]   Primary: no match cleared gates (${primaryOutcome.rejectionReason}) — trying fallback`)
+  const fallback = await searchWithFallback(team_name, brokerage, state, apiKey, false)
+  if (fallback.apiTimeout) {
+    console.log(`[Zillow]   Decision: REJECTED — api_timeout (fallback)`)
+    return { zillow_url: null, match_score: 0, matched_name: null, match_confidence: 'none', match_type: 'none', rejection_reason: 'api_timeout' }
   }
 
-  // Hard-reject solo agent records before scoring — keeps only team profiles
-  const teamResults = results.filter(isTeamRecord)
-  if (teamResults.length === 0) {
-    console.log(`[Zillow]   Decision: REJECTED — no_results (all ${results.length} candidate(s) are solo agent profiles)`)
-    return { zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'no_results' }
-  }
-  if (teamResults.length < results.length) {
-    console.log(`[Zillow]   Filtered ${results.length - teamResults.length} solo agent record(s), ${teamResults.length} team record(s) remain`)
-  }
-  results = teamResults
-
-  type Scored = { result: ZillowResult; total: number; ns: number; bs: number; displayName: string }
-  const scored: Scored[] = results.map(r => {
-    const displayName = r.team_name ?? r.business_name ?? r.full_name ?? ''
-    const ns = Math.max(
-      calcNameScore(team_name, r.team_name ?? ''),
-      calcNameScore(team_name, r.business_name ?? ''),
-      calcNameScore(team_name, r.full_name ?? '')
-    )
-    const bs = calcBrokerageScore(brokerage, r.business_name ?? '')
-    return { result: r, total: ns + bs, ns, bs, displayName }
-  })
-  scored.sort((a, b) => b.total - a.total)
-
-  console.log(`[Zillow]   Top ${Math.min(3, scored.length)} candidates:`)
-  scored.slice(0, 3).forEach((s, i) => {
-    console.log(
-      `[Zillow]     ${i + 1}. ${s.displayName} | ${s.result.business_name ?? ''} | ` +
-      `score=${s.total} (name=${s.ns}, brok=${s.bs})`
-    )
-  })
-
-  const best = scored[0]
-
-  // Gate: name score must clear minimum before brokerage bonus is considered
-  if (best.ns < MIN_NAME_SCORE) {
-    console.log(`[Zillow]   Decision: REJECTED — name score ${best.ns} below minimum ${MIN_NAME_SCORE}`)
-    return { zillow_url: null, match_score: best.total, matched_name: best.displayName, rejection_reason: 'below_threshold' }
+  const fallbackOutcome = bestScoredMatch(fallback.results, team_name, brokerage)
+  if (fallbackOutcome.match) {
+    const m = fallbackOutcome.match
+    const isTeam = isTeamRecord(m.result)
+    // Cap fallback matches at medium — primary not finding them is a weaker signal
+    const rawConf = calcConfidence(m.total, isTeam, noState)
+    const conf = rawConf === 'high' ? 'medium' : rawConf
+    console.log(`[Zillow]   Decision: ACCEPTED (fallback) ${m.result.profile_link} — score=${m.total} conf=${conf} type=${isTeam ? 'team' : 'individual_agent'}`)
+    return {
+      zillow_url: m.result.profile_link,
+      match_score: m.total,
+      matched_name: m.displayName,
+      match_confidence: conf,
+      match_type: isTeam ? 'team' : 'individual_agent',
+    }
   }
 
-  const inputChain = extractChain(brokerage)
-  const resultChain = extractChain(best.result.business_name ?? '')
-  if (inputChain && resultChain && inputChain !== resultChain) {
-    console.log(`[Zillow]   Decision: REJECTED — chain mismatch (${inputChain} vs ${resultChain})`)
-    return { zillow_url: null, match_score: best.total, matched_name: best.displayName, rejection_reason: 'chain_mismatch' }
-  }
+  // Determine final rejection reason: prefer chain_mismatch > below_threshold > no_results
+  const reasons = [primaryOutcome.rejectionReason, fallbackOutcome.rejectionReason]
+  const rejectionReason =
+    reasons.includes('chain_mismatch') ? 'chain_mismatch' :
+    reasons.includes('below_threshold') ? 'below_threshold' :
+    'no_results'
 
-  if (best.total < ACCEPT_THRESHOLD) {
-    console.log(`[Zillow]   Decision: REJECTED — top score ${best.total} below threshold ${ACCEPT_THRESHOLD}`)
-    return { zillow_url: null, match_score: best.total, matched_name: best.displayName, rejection_reason: 'below_threshold' }
+  console.log(`[Zillow]   Decision: REJECTED — ${rejectionReason}`)
+  return {
+    zillow_url: null,
+    match_score: 0,
+    matched_name: null,
+    match_confidence: 'none',
+    match_type: 'none',
+    rejection_reason: rejectionReason,
   }
-
-  console.log(`[Zillow]   Decision: ACCEPTED ${best.result.profile_link} (score=${best.total})`)
-  return { zillow_url: best.result.profile_link, match_score: best.total, matched_name: best.displayName }
 }
