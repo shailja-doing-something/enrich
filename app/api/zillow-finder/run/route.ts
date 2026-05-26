@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import { findZillowUrl, type MatchConfidence, type MatchType } from '@/lib/enrichment/zillowMatcher'
+import { findZillowUrl } from '@/lib/enrichment/zillowMatcher'
 
 // No Supabase imports — this route is stateless and writes nothing to any database.
 
@@ -21,8 +21,6 @@ type ResultRow = InputRow & {
   zillow_url: string | null
   match_score: number
   matched_name: string | null
-  match_confidence: MatchConfidence
-  match_type: MatchType
   rejection_reason?: string
 }
 
@@ -37,7 +35,7 @@ async function processRow(row: InputRow): Promise<ResultRow> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[zillow-finder] error for "${row.team_name}": ${msg}`)
-    return { ...row, zillow_url: null, match_score: 0, matched_name: null, match_confidence: 'none', match_type: 'none', rejection_reason: 'api_timeout' }
+    return { ...row, zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'api_timeout' }
   }
 }
 
@@ -61,7 +59,7 @@ export async function POST(request: NextRequest) {
   const results: ResultRow[] = settled.map((r, i) =>
     r.status === 'fulfilled'
       ? r.value
-      : { ...rows[i], zillow_url: null, match_score: 0, matched_name: null, match_confidence: 'none' as MatchConfidence, match_type: 'none' as MatchType, rejection_reason: 'api_timeout' }
+      : { ...rows[i], zillow_url: null, match_score: 0, matched_name: null, rejection_reason: 'api_timeout' }
   )
 
   return Response.json({ data: { results } })

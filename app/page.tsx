@@ -164,7 +164,6 @@ export default function DashboardPage() {
   type ZfResultRow = {
     mad_id: string; team_name: string; brokerage: string; location: string
     zillow_url: string | null; match_score: number; matched_name: string | null
-    match_confidence: string; match_type: string
     rejection_reason?: string
   }
   const [zfFile, setZfFile] = useState<File | null>(null)
@@ -550,7 +549,7 @@ export default function DashboardPage() {
   }
 
   function downloadZfCsv(results: ZfResultRow[]) {
-    const header = 'MAD_ID,Team Name,Brokerage,Location,Zillow URL,Match Score,Matched Name,Match Confidence,Match Type'
+    const header = 'MAD_ID,Team Name,Brokerage,Location,Zillow URL,Match Score,Matched Name'
     const escape = (v: string) => `"${v.replace(/"/g, '""')}"`
     const lines = results.map(r =>
       [
@@ -561,8 +560,6 @@ export default function DashboardPage() {
         escape(r.zillow_url ?? ''),
         String(r.match_score),
         escape(r.matched_name ?? ''),
-        escape(r.match_confidence ?? ''),
-        escape(r.match_type ?? ''),
       ].join(',')
     )
     const csv = [header, ...lines].join('\n')
@@ -930,23 +927,10 @@ export default function DashboardPage() {
 
       {zfResults !== null && !zfRunning && (() => {
         const matched = zfResults.filter(r => r.zillow_url).length
-        const high = zfResults.filter(r => r.match_confidence === 'high').length
-        const medium = zfResults.filter(r => r.match_confidence === 'medium').length
-        const low = zfResults.filter(r => r.match_confidence === 'low').length
-        const none = zfResults.filter(r => r.match_confidence === 'none' || !r.match_confidence).length
         return (
-          <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-4">
             <span className="text-sm text-gray-600">
-              Matched: <span className="font-medium">{matched} / {zfResults.length}</span>
-              <span className="ml-2 text-gray-400">(
-                <span className="text-green-700">High: {high}</span>
-                {' · '}
-                <span className="text-yellow-700">Medium: {medium}</span>
-                {' · '}
-                <span className="text-orange-600">Low: {low}</span>
-                {' · '}
-                <span className="text-gray-500">None: {none}</span>
-              )</span>
+              Matched: <span className="font-medium">{matched} / {zfResults.length}</span> teams
             </span>
             <button
               onClick={() => downloadZfCsv(zfResults)}

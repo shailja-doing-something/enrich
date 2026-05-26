@@ -1,18 +1,5 @@
 # Release Notes
 
-## [0.9.15] — 2026-05-26 — Fix Zillow scoring false positives: remove business_name from name scoring, add match_confidence + match_type output columns
-
-### Fixed
-- `lib/enrichment/zillowMatcher.ts` — removed `r.business_name` from `Math.max()` in name scoring; `business_name` is the brokerage affiliation, not the team name; including it caused any team whose input name matched a brokerage (e.g. "Barrett Real Estate") to score 100 for every agent at that brokerage; name scoring now uses only `r.team_name` and `r.full_name`
-- Same file — `isTeamRecord()` no longer hard-rejects candidates; used only to classify `match_type`; fallback search now runs whenever primary finds no match that clears gates (not just on zero raw results)
-- Same file — added `bestScoredMatch()` helper consolidating scoring + gate logic; gate order: MIN_NAME_SCORE → chain mismatch → ACCEPT_THRESHOLD
-- Same file — added `calcConfidence()`: `high` = score ≥ 75 AND team record AND state known; `medium` = score 60–74 AND team, OR ≥ 75 solo; `low` = everything else above threshold; fallback matches capped at medium
-- `app/api/zillow-finder/run/route.ts` — `ResultRow` type extended with `match_confidence: MatchConfidence` and `match_type: MatchType`; error fallbacks emit `'none'` for both
-- `app/page.tsx` — `ZfResultRow` type extended with `match_confidence` and `match_type`; `downloadZfCsv` adds `Match Confidence` and `Match Type` columns to output CSV; match summary now shows confidence breakdown: `Matched: X / N (High: A · Medium: B · Low: C · None: D)`
-
-### Added output columns
-`Match Confidence` (`high | medium | low | none`) and `Match Type` (`team | individual_agent | none`) in the Zillow Finder CSV download.
-
 ## [0.9.14] — 2026-05-26 — Standalone Zillow URL finder + shared matcher module + staging table migration
 
 ### Added
