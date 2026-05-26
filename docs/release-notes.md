@@ -1,5 +1,20 @@
 # Release Notes
 
+## [0.9.14] — 2026-05-26 — Standalone Zillow URL finder + shared matcher module + staging table migration
+
+### Added
+- `lib/enrichment/zillowMatcher.ts` — extracted all Zillow matching logic into a shared module (`findZillowUrl`, `calcNameScore`, `calcBrokerageScore`, `isTeamRecord`, `sanitizeQuery`, `parseState`, retry/backoff cascade, chain hard-reject, full_name scoring); both `find-zillow-url/route.ts` and the new finder route import from here — no duplication
+- `app/api/zillow-finder/run/route.ts` — new stateless POST route; Zod-validates `{ rows: Array<{mad_id, team_name, brokerage, location}> }` (1–50 rows); processes all rows with `Promise.allSettled`; returns `{ data: { results: [...] } }` with `zillow_url`, `match_score`, `matched_name`, `rejection_reason` per row; zero Supabase imports or DB calls
+- Dashboard: "Zillow URL Finder (standalone)" section — PapaParse client-side header validation, sends rows in batches of 5 with live `Processing row X of N…` progress bar, client-side CSV generation (`zillow-finder-results-{timestamp}.csv`), match summary on completion
+- `supabase/migrations/20260526000000_create_staging_batch_tables.sql` — creates `staging.batches`, `staging.teams`, `staging.agents`, `staging.pipeline_log` with column names matching all `ce_*` RPCs; includes unique expression index on `staging.agents(team_id, COALESCE(lower(first_name),''), COALESCE(lower(last_name),''))` required by `ce_insert_agents_bulk ON CONFLICT`
+
+### Changed
+- `app/api/company-enrichment/find-zillow-url/route.ts` — refactored to 35 lines; imports `findZillowUrl` from shared module; behavior unchanged
+- `app/api/company-enrichment/start/route.ts` — improved error logging: `JSON.stringify(batchErr)` and `JSON.stringify(teamsErr)` instead of `.message` only, exposing Postgres `code`/`details`/`hint` in Railway logs
+
+### Schema changes (apply in Supabase dashboard — run migration SQL)
+`staging.batches`, `staging.teams`, `staging.agents`, `staging.pipeline_log` — see migration file
+
 ## [0.9.13] — 2026-05-20 — Score full_name alongside team_name and business_name in Zillow matcher
 
 ### Fixed
