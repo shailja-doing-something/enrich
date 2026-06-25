@@ -2,8 +2,6 @@ import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { parseCSV } from '@/lib/csv/parse'
-import { env } from '@/lib/env'
-
 export async function POST(request: NextRequest) {
   let formData: FormData
   try {
@@ -60,9 +58,10 @@ export async function POST(request: NextRequest) {
 
   // Fire Stage 1 as its own request so it gets a full lifecycle on Railway.
   // A bare function call gets killed when this response is sent.
-  const proto   = request.headers.get('x-forwarded-proto') ?? 'http'
-  const host    = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? 'localhost:3000'
-  const baseUrl = env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`
+  // Use the Host header directly — x-forwarded-host can be unreliable on Railway.
+  const host     = request.headers.get('host') ?? 'localhost:3000'
+  const protocol = host.startsWith('localhost') ? 'http' : 'https'
+  const baseUrl  = `${protocol}://${host}`
 
   fetch(`${baseUrl}/api/enrich/run/${jobId}`, { method: 'POST' })
     .catch(err => console.error('[upload] failed to trigger run route:', err))

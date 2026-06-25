@@ -104,9 +104,6 @@ export default function Home() {
 
   const totalRows    = job?.total_rows ?? 0
   const matchedCount = job?.stage1_matched ?? 0
-  const progressPct  = totalRows > 0
-    ? Math.min(100, Math.round((matchedCount / totalRows) * 100))
-    : 0
   const stage1Done   = job?.stage1_status === 'done'
   const stage2Done   = job?.stage2_status === 'done'
   const stage1Running = job?.stage1_status === 'running'
@@ -253,6 +250,9 @@ export default function Home() {
 
   const progressValue = isStage2 ? (job?.stage2_enriched ?? 0) : matchedCount
   const progressMax   = isStage2 ? matchedCount : totalRows
+  const progressPct   = progressMax > 0
+    ? Math.min(100, Math.round((progressValue / progressMax) * 100))
+    : 0
 
   return (
     <main className="min-h-screen bg-gray-50 p-6">

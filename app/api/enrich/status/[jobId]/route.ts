@@ -25,7 +25,7 @@ export async function GET(
     .eq('id', jobId)
     .maybeSingle()
 
-  if (jobErr) return Response.json({ error: jobErr.message }, { status: 500 })
+  if (jobErr) { console.error('[status] job fetch error:', jobErr.message); return Response.json({ error: jobErr.message }, { status: 500 }) }
   if (!job)   return Response.json({ error: 'Job not found' }, { status: 404 })
 
   const { data: rows, error: rowsErr } = await supabaseAdmin
@@ -34,7 +34,8 @@ export async function GET(
     .eq('job_id', jobId)
     .order('row_index', { ascending: true })
 
-  if (rowsErr) return Response.json({ error: rowsErr.message }, { status: 500 })
+  if (rowsErr) { console.error('[status] rows fetch error:', rowsErr.message); return Response.json({ error: rowsErr.message }, { status: 500 }) }
 
+  console.log(`[status] jobId=${jobId} stage1=${job.stage1_status} matched=${job.stage1_matched}/${job.total_rows} rows=${rows?.length ?? 0}`)
   return Response.json({ data: { job, rows: rows ?? [] } })
 }

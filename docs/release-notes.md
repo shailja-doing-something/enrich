@@ -1,5 +1,15 @@
 # Release Notes
 
+## [0.9.17] — 2026-06-26 — Fix stage1 timeout + URL construction + progress bar
+
+### Fixed
+- `app/api/enrich/run/[jobId]/route.ts` — removed `await` from `runStage1()` call; the await kept the HTTP request open until stage1 finished, causing Railway to kill it after ~30s and terminate mid-run enrichment; now fires fire-and-forget and returns `{ started: true }` immediately
+- `app/api/enrich/upload/route.ts` — removed `x-forwarded-host` and `env.NEXT_PUBLIC_APP_URL` from run-route URL construction; Railway's forwarded host was unreliable; now uses `request.headers.get('host')` directly with `localhost` detection for protocol
+- `app/page.tsx` — stage 2 progress bar was always showing stage 1 ratio (`stage1_matched / total_rows`); fixed by computing `progressPct` from `progressValue`/`progressMax` which switch to `stage2_enriched / stage1_matched` when in stage 2
+
+### Changed
+- `app/api/enrich/status/[jobId]/route.ts` — added server-side logging per poll (`stage1_status`, `stage1_matched`, `total_rows`, row count) to make Railway log diagnostics easier
+
 ## [0.9.16] — 2026-05-26 — Hybrid Zillow lookup: local table first, external API fallback
 
 ### Changed

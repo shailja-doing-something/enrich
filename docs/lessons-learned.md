@@ -2,6 +2,12 @@
 
 ## Gotchas
 
+### Never `await` a long-running function in a Railway route handler
+Railway terminates HTTP requests after ~30s. If a route handler `await`s a long-running function (like a per-row enrichment loop over hundreds of rows), Railway kills the request and the in-flight work stops mid-run with no error. The DB writes stop, the job stays at `running`, and logs show "Done" from a previous run's PID. Fix: fire-and-forget (`fn().catch(...)`) and return the response immediately. The Node.js event loop continues running the promise after the response is sent because Railway is a persistent process, not serverless.
+
+### `x-forwarded-host` is unreliable on Railway for self-referencing fetches
+When a route handler fires a self-referencing fetch (e.g., upload route triggering the run route), constructing the URL with `x-forwarded-host` can produce the wrong host. Use `request.headers.get('host')` directly — it always reflects the actual listening host. Use `host.startsWith('localhost') ? 'http' : 'https'` for protocol rather than `x-forwarded-proto`.
+
 ### staging.zillow_agent_profiles has no trigram index — filter by is_team first, score app-side
 The table has 781k rows with only BTREE indexes on `full_name`, `team_name`, `is_team`, `email`, etc. — no pg_trgm GIN index. Fuzzy name queries with `LIKE '%name%'` would do sequential scans. The practical query strategy: filter `is_team = true AND address_state = $state` using the `is_team` index (reduces to ~45k team records), then filter by state (no state index, ~900/state), return up to 2000, score entirely in TypeScript using the same `scoreAndPick` logic used for API results. This is fast enough and consistent — one scorer for both sources.
 

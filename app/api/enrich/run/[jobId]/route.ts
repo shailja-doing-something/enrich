@@ -19,6 +19,10 @@ export async function POST(
     return Response.json({ error: parsed.error.issues[0]?.message ?? 'Invalid job ID' }, { status: 400 })
   }
 
-  await runStage1(parsed.data.jobId)
-  return Response.json({ data: { done: true } })
+  // Fire-and-forget — do NOT await. Railway kills the request after ~30s
+  // but stage1 needs minutes. Returning immediately lets it run independently.
+  runStage1(parsed.data.jobId).catch(err =>
+    console.error('[run] runStage1 uncaught error:', err)
+  )
+  return Response.json({ data: { started: true } })
 }
