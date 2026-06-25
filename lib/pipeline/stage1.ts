@@ -1,9 +1,11 @@
 import { supabaseAdmin } from '@/lib/supabase/client'
 import type { EnrichRow } from '@/lib/supabase/types'
 
-type LookupResult =
-  | { zillow_url: string;  match_type: 'email' | 'name_team' | 'name_fuzzy' }
-  | { zillow_url: null;    match_type: 'no_match' }
+type LookupResult = {
+  zillow_url:    string | null
+  match_type:    string
+  zillow_profile: Record<string, unknown>
+}
 
 export async function runStage1(jobId: string): Promise<void> {
   console.log(`[stage1] Starting for job ${jobId}`)
@@ -72,6 +74,7 @@ async function processRow(row: EnrichRow): Promise<LookupResult> {
       .update({
         zillow_url:          result.zillow_url,
         match_type:          result.match_type,
+        zillow_profile:      result.zillow_profile,
         stage1_completed_at: new Date().toISOString(),
       })
       .eq('id', row.id)
@@ -79,7 +82,7 @@ async function processRow(row: EnrichRow): Promise<LookupResult> {
     return result
   } catch (err) {
     console.error(`[stage1] processRow crashed for row ${row.id}:`, err)
-    return { zillow_url: null, match_type: 'no_match' }
+    return { zillow_url: null, match_type: 'no_match', zillow_profile: {} }
   }
 }
 
@@ -93,21 +96,33 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
         .rpc('find_zillow_by_email', { p_email: row.email!.trim() })
       if (error) console.error('[lookup] email rpc error:', error)
       if (!error && data?.profile_link) {
-        return { zillow_url: data.profile_link as string, match_type: 'email' }
+        return {
+          zillow_url:    data.profile_link as string,
+          match_type:    'email',
+          zillow_profile: data as Record<string, unknown>,
+        }
       }
     } catch (e) { console.error('[lookup] email error', e) }
   }
 
-  // 2. Name + company (skip if either is empty)
+  // 2. Name + company — fires (name, company) and (company, name) in parallel, takes first hit
   const name    = (row.name    ?? '').trim()
   const company = (row.company ?? '').trim()
   if (name && company) {
     try {
-      const { data, error } = await supabaseAdmin
-        .rpc('find_zillow_by_name_team', { p_name: name, p_company: company })
-      if (error) console.error('[lookup] name_team rpc error:', error)
-      if (!error && data?.profile_link) {
-        return { zillow_url: data.profile_link as string, match_type: 'name_team' }
+      const [resA, resB] = await Promise.all([
+        supabaseAdmin.rpc('find_zillow_by_name_team', { p_name: name,    p_company: company }),
+        supabaseAdmin.rpc('find_zillow_by_name_team', { p_name: company, p_company: name    }),
+      ])
+      if (resA.error) console.error('[lookup] name_team rpc error (A):', resA.error)
+      if (resB.error) console.error('[lookup] name_team rpc error (B):', resB.error)
+      const hit = resA.data ?? resB.data
+      if (hit?.profile_link) {
+        return {
+          zillow_url:    hit.profile_link as string,
+          match_type:    'name_team',
+          zillow_profile: hit as Record<string, unknown>,
+        }
       }
     } catch (e) { console.error('[lookup] name_team error', e) }
   }
@@ -121,10 +136,14 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
         .rpc('find_zillow_by_name_state', { p_name: name, p_state: stateCode })
       if (error) console.error('[lookup] name_fuzzy rpc error:', error)
       if (!error && data?.profile_link) {
-        return { zillow_url: data.profile_link as string, match_type: 'name_fuzzy' }
+        return {
+          zillow_url:    data.profile_link as string,
+          match_type:    'name_fuzzy',
+          zillow_profile: data as Record<string, unknown>,
+        }
       }
     } catch (e) { console.error('[lookup] name_fuzzy error', e) }
   }
 
-  return { zillow_url: null, match_type: 'no_match' }
+  return { zillow_url: null, match_type: 'no_match', zillow_profile: {} }
 }

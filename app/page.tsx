@@ -347,7 +347,7 @@ export default function Home() {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {['#', 'Name', 'Email', 'Location', 'Company', 'Zillow URL', 'Match'].map(h => (
+                  {['#', 'Name', 'Email', 'Location', 'Company', 'Zillow URL', 'Match', 'Rating', 'Sales (12M)', 'Team', 'Is Team'].map(h => (
                     <th
                       key={h}
                       className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
@@ -366,7 +366,7 @@ export default function Home() {
                 {rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={isStage2 ? 8 : 7}
+                      colSpan={isStage2 ? 12 : 11}
                       className="px-4 py-8 text-center text-gray-400 text-sm"
                     >
                       Waiting for rows…
@@ -412,6 +412,26 @@ export default function Home() {
                           <MatchBadge
                             type={row.stage1_completed_at !== null ? (row.match_type ?? 'no_match') : null}
                           />
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-500 tabular-nums">
+                          {row.stage1_completed_at
+                            ? String((row.zillow_profile as Record<string, unknown>)['rating_average'] ?? '—')
+                            : '—'}
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-500 tabular-nums">
+                          {row.stage1_completed_at
+                            ? String((row.zillow_profile as Record<string, unknown>)['sales_last_12_months'] ?? '—')
+                            : '—'}
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-500 max-w-[140px] truncate">
+                          {row.stage1_completed_at
+                            ? String((row.zillow_profile as Record<string, unknown>)['team_name'] ?? '—')
+                            : '—'}
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-500">
+                          {row.stage1_completed_at
+                            ? ((row.zillow_profile as Record<string, unknown>)['is_team'] ? 'Yes' : 'No')
+                            : '—'}
                         </td>
                         {isStage2 && (
                           <td className="px-4 py-2.5">

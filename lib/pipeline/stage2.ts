@@ -29,7 +29,7 @@ export async function runStage2(jobId: string): Promise<void> {
     const BATCH = 10
     for (let i = 0; i < enrichable.length; i += BATCH) {
       const slice = enrichable.slice(i, i + BATCH)
-      await Promise.all(slice.map(row => enrichRow(row)))
+      await Promise.all(slice.map(row => markRowDone(row)))
       enrichedCount += slice.length
       // Write live progress after every batch so the UI updates in real time
       await supabaseAdmin
@@ -59,17 +59,12 @@ export async function runStage2(jobId: string): Promise<void> {
   }
 }
 
-async function enrichRow(row: EnrichRow): Promise<void> {
-  const { data, error } = await supabaseAdmin
-    .rpc('get_zillow_profile_by_url', { p_profile_link: row.zillow_url })
-  if (error) console.error('[stage2] rpc error', row.id, error)
-
-  const { error: updateErr } = await supabaseAdmin
+async function markRowDone(row: EnrichRow): Promise<void> {
+  // TODO: Replace with team size lookup when table is provided
+  console.log(`[stage2] team size TBD — skipping row ${row.id}`)
+  const { error } = await supabaseAdmin
     .from('enrich_rows')
-    .update({
-      zillow_profile:      data ?? {},
-      stage2_completed_at: new Date().toISOString(),
-    })
+    .update({ stage2_completed_at: new Date().toISOString() })
     .eq('id', row.id)
-  if (updateErr) console.error(`[stage2] Failed to update row ${row.id}:`, updateErr.message)
+  if (error) console.error(`[stage2] Failed to update row ${row.id}:`, error.message)
 }
