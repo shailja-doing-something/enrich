@@ -13,7 +13,21 @@ export async function runStage1(jobId: string): Promise<void> {
       .from('enrich_jobs')
       .update({ stage1_status: 'running' })
       .eq('id', jobId)
-    if (startErr) throw new Error(startErr.message)
+    if (startErr) {
+      console.error('[stage1] Failed to set running status:', startErr)
+      throw new Error(startErr.message)
+    }
+
+    // Verify Zillow DB connectivity before processing rows
+    try {
+      const { count, error: pingErr } = await zillowDb
+        .from('zillow_agent_profiles')
+        .select('*', { count: 'exact', head: true })
+      if (pingErr) console.error('[stage1] Zillow DB connectivity error:', pingErr)
+      else console.log(`[stage1] Zillow DB reachable, approx rows=${count}`)
+    } catch (e) {
+      console.error('[stage1] Zillow DB connectivity check threw:', e)
+    }
 
     const { data: rows, error: fetchErr } = await supabaseAdmin
       .from('enrich_rows')
@@ -83,84 +97,75 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
 
   // 1. Email
   if ((row.email ?? '').trim()) {
-    try {
-      const { data } = await zillowDb
-        .from('zillow_agent_profiles')
-        .select('profile_link')
-        .ilike('email', row.email!.trim())
-        .limit(1)
-        .maybeSingle()
-      if (data?.profile_link)
-        return { zillow_url: data.profile_link as string, match_type: 'email' }
-    } catch (e) {
-      console.error('[lookup] email error', e)
-    }
+    const { data, error } = await zillowDb
+      .from('zillow_agent_profiles')
+      .select('profile_link')
+      .ilike('email', row.email!.trim())
+      .limit(1)
+      .maybeSingle()
+    if (error) console.error('[lookup] email query error:', error)
+    if (profileLink(data)) return { zillow_url: profileLink(data)!, match_type: 'email' }
   }
 
   // 2. Name + company (skip if either is empty)
   const name    = (row.name    ?? '').trim()
   const company = (row.company ?? '').trim()
   if (name && company) {
-    try {
-      const [resA, resB] = await Promise.all([
-        zillowDb
-          .from('zillow_agent_profiles')
-          .select('profile_link')
-          .ilike('full_name',    `%${name}%`)
-          .ilike('team_name',    `%${company}%`)
-          .limit(1)
-          .maybeSingle(),
-        zillowDb
-          .from('zillow_agent_profiles')
-          .select('profile_link')
-          .ilike('full_name',     `%${name}%`)
-          .ilike('business_name', `%${company}%`)
-          .limit(1)
-          .maybeSingle(),
-      ])
-      const hit = (resA.data as Record<string, unknown> | null)?.profile_link
-               ?? (resB.data as Record<string, unknown> | null)?.profile_link
-      if (hit) return { zillow_url: hit as string, match_type: 'name_team' }
-    } catch (e) {
-      console.error('[lookup] name_team error', e)
-    }
+    const [resA, resB] = await Promise.all([
+      zillowDb
+        .from('zillow_agent_profiles')
+        .select('profile_link')
+        .ilike('full_name',  `%${name}%`)
+        .ilike('team_name',  `%${company}%`)
+        .limit(1)
+        .maybeSingle(),
+      zillowDb
+        .from('zillow_agent_profiles')
+        .select('profile_link')
+        .ilike('full_name',     `%${name}%`)
+        .ilike('business_name', `%${company}%`)
+        .limit(1)
+        .maybeSingle(),
+    ])
+    if (resA.error) console.error('[lookup] name_team A query error:', resA.error)
+    if (resB.error) console.error('[lookup] name_team B query error:', resB.error)
+    const hit = profileLink(resA.data) ?? profileLink(resB.data)
+    if (hit) return { zillow_url: hit, match_type: 'name_team' }
   }
 
   // 3. Phone (last 10 digits)
   const rawPhone = (row.phone ?? '').replace(/\D/g, '').slice(-10)
   if (rawPhone.length === 10) {
-    try {
-      const { data } = await zillowDb
-        .from('zillow_agent_profiles')
-        .select('profile_link')
-        .eq('phone_cell', rawPhone)
-        .limit(1)
-        .maybeSingle()
-      if (data?.profile_link)
-        return { zillow_url: data.profile_link as string, match_type: 'phone' }
-    } catch (e) {
-      console.error('[lookup] phone error', e)
-    }
+    const { data, error } = await zillowDb
+      .from('zillow_agent_profiles')
+      .select('profile_link')
+      .eq('phone_cell', rawPhone)
+      .limit(1)
+      .maybeSingle()
+    if (error) console.error('[lookup] phone query error:', error)
+    if (profileLink(data)) return { zillow_url: profileLink(data)!, match_type: 'phone' }
   }
 
   // 4. Name fuzzy (optionally filtered by state)
   if (name) {
-    try {
-      const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
-      const stateCode  = stateMatch?.[1] ?? null
-      const base = zillowDb
-        .from('zillow_agent_profiles')
-        .select('profile_link')
-        .ilike('full_name', `%${name}%`)
-      const { data } = await (stateCode
-        ? base.eq('address_state', stateCode).limit(1).maybeSingle()
-        : base.limit(1).maybeSingle())
-      if (data?.profile_link)
-        return { zillow_url: data.profile_link as string, match_type: 'name_fuzzy' }
-    } catch (e) {
-      console.error('[lookup] name_fuzzy error', e)
-    }
+    const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
+    const stateCode  = stateMatch?.[1] ?? null
+    const base = zillowDb
+      .from('zillow_agent_profiles')
+      .select('profile_link')
+      .ilike('full_name', `%${name}%`)
+    const { data, error } = await (stateCode
+      ? base.eq('address_state', stateCode).limit(1).maybeSingle()
+      : base.limit(1).maybeSingle())
+    if (error) console.error('[lookup] name_fuzzy query error:', error)
+    if (profileLink(data)) return { zillow_url: profileLink(data)!, match_type: 'name_fuzzy' }
   }
 
   return { zillow_url: null, match_type: 'no_match' }
+}
+
+function profileLink(data: unknown): string | null {
+  if (!data) return null
+  const link = (data as Record<string, unknown>)['profile_link']
+  return typeof link === 'string' && link ? link : null
 }
