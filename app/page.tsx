@@ -31,6 +31,7 @@ function MatchBadge({ type }: { type: string | null }) {
   }
   const styles: Record<string, string> = {
     email:      'bg-green-100 text-green-700',
+    name_team:  'bg-purple-100 text-purple-700',
     phone:      'bg-blue-100 text-blue-700',
     name_fuzzy: 'bg-yellow-100 text-yellow-700',
     no_match:   'bg-red-100 text-red-700',
