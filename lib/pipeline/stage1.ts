@@ -3,7 +3,7 @@ import { zillowDb } from '@/lib/supabase/zillowClient'
 import type { EnrichRow } from '@/lib/supabase/types'
 
 type LookupResult =
-  | { zillow_url: string;  match_type: 'email' | 'name_team' | 'phone' | 'name_fuzzy' }
+  | { zillow_url: string;  match_type: 'email' | 'name_team' | 'name_fuzzy' }
   | { zillow_url: null;    match_type: 'no_match' }
 
 export async function runStage1(jobId: string): Promise<void> {
@@ -40,31 +40,32 @@ export async function runStage1(jobId: string): Promise<void> {
     const pending = (rows ?? []) as EnrichRow[]
     console.log(`[stage1] jobId=${jobId} rows=${pending.length}`)
 
+    let matchedCount = 0
     const BATCH = 10
     for (let i = 0; i < pending.length; i += BATCH) {
-      const slice = pending.slice(i, i + BATCH)
-      await Promise.all(slice.map(row => processRow(row)))
+      const slice   = pending.slice(i, i + BATCH)
+      const results = await Promise.all(slice.map(row => processRow(row)))
+      for (const result of results) {
+        if (result.zillow_url !== null) matchedCount++
+      }
+      // Write live progress after every batch so the UI updates in real time
+      await supabaseAdmin
+        .from('enrich_jobs')
+        .update({ stage1_matched: matchedCount })
+        .eq('id', jobId)
     }
-
-    const { count: matched, error: countErr } = await supabaseAdmin
-      .from('enrich_rows')
-      .select('*', { count: 'exact', head: true })
-      .eq('job_id', jobId)
-      .not('zillow_url', 'is', null)
-
-    if (countErr) throw new Error(countErr.message)
 
     const { error: doneErr } = await supabaseAdmin
       .from('enrich_jobs')
       .update({
-        stage1_status: 'done',
-        stage1_matched: matched ?? 0,
-        stage1_completed_at: new Date().toISOString(),
+        stage1_status:        'done',
+        stage1_matched:       matchedCount,
+        stage1_completed_at:  new Date().toISOString(),
       })
       .eq('id', jobId)
     if (doneErr) throw new Error(doneErr.message)
 
-    console.log(`[stage1] Done for job ${jobId} matched=${matched ?? 0}`)
+    console.log(`[stage1] Done for job ${jobId} matched=${matchedCount}`)
 
   } catch (err) {
     console.error('[stage1] FATAL ERROR', err)
@@ -75,7 +76,7 @@ export async function runStage1(jobId: string): Promise<void> {
   }
 }
 
-async function processRow(row: EnrichRow): Promise<void> {
+async function processRow(row: EnrichRow): Promise<LookupResult> {
   try {
     const result = await lookupZillowProfile(row)
     const { error } = await supabaseAdmin
@@ -87,8 +88,10 @@ async function processRow(row: EnrichRow): Promise<void> {
       })
       .eq('id', row.id)
     if (error) console.error(`[stage1] Failed to update row ${row.id}:`, error.message)
+    return result
   } catch (err) {
     console.error(`[stage1] processRow crashed for row ${row.id}:`, err)
+    return { zillow_url: null, match_type: 'no_match' }
   }
 }
 
@@ -133,20 +136,7 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
     if (hit) return { zillow_url: hit, match_type: 'name_team' }
   }
 
-  // 3. Phone (last 10 digits)
-  const rawPhone = (row.phone ?? '').replace(/\D/g, '').slice(-10)
-  if (rawPhone.length === 10) {
-    const { data, error } = await zillowDb
-      .from('zillow_agent_profiles')
-      .select('profile_link')
-      .eq('phone_cell', rawPhone)
-      .limit(1)
-      .maybeSingle()
-    if (error) console.error('[lookup] phone query error:', error)
-    if (profileLink(data)) return { zillow_url: profileLink(data)!, match_type: 'phone' }
-  }
-
-  // 4. Name fuzzy (optionally filtered by state)
+  // 3. Name fuzzy + state (phone lookup removed — phone_cell has no index, times out)
   if (name) {
     const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
     const stateCode  = stateMatch?.[1] ?? null
