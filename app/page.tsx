@@ -1,15 +1,10 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import type { DragEvent, ChangeEvent } from 'react'
 import type { EnrichJob, EnrichRow } from '@/lib/supabase/types'
 
 type View = 'upload' | 'stage1' | 'stage2'
-
-interface PollData {
-  job: EnrichJob
-  rows: EnrichRow[]
-}
 
 // ── sub-components ─────────────────────────────────────────────────────────
 
@@ -52,34 +47,55 @@ function ErrorBanner({ message }: { message: string }) {
 export default function Home() {
   const [view, setView]                     = useState<View>('upload')
   const [jobId, setJobId]                   = useState<string | null>(null)
-  const [pollData, setPollData]             = useState<PollData | null>(null)
+  const [job, setJob]                       = useState<EnrichJob | null>(null)
+  const [rows, setRows]                     = useState<EnrichRow[]>([])
   const [uploading, setUploading]           = useState(false)
   const [uploadError, setUploadError]       = useState<string | null>(null)
   const [dragging, setDragging]             = useState(false)
   const [stage2Starting, setStage2Starting] = useState(false)
 
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const intervalRef  = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const poll = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`/api/enrich/status/${id}`, { cache: 'no-store' })
-      if (!res.ok) return
-      const json = (await res.json()) as { data?: PollData }
-      if (json.data) setPollData(json.data)
-    } catch {
-      // silent — retry on next tick
-    }
-  }, [])
-
+  // Fetch immediately when jobId is set — don't wait 2s for the first poll tick
   useEffect(() => {
-    if (!jobId || view === 'upload') return
-    poll(jobId)
-    intervalRef.current = setInterval(() => poll(jobId), 2000)
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-    }
-  }, [jobId, view, poll])
+    if (!jobId) return
+    fetch(`/api/enrich/status/${jobId}?t=${Date.now()}`)
+      .then(r => r.json())
+      .then(json => {
+        if (!json.data) return
+        setJob(json.data.job)
+        setRows(json.data.rows)
+      })
+      .catch(console.error)
+  }, [jobId])
+
+  // Polling — stops automatically when the relevant stage is done
+  useEffect(() => {
+    if (!jobId) return
+    // Don't set up a new interval if stage1 is already done (and we haven't moved to stage2)
+    if (job?.stage1_status === 'done' && view !== 'stage2') return
+    // Don't set up a new interval if stage2 is already done
+    if (job?.stage2_status === 'done') return
+
+    const interval = setInterval(async () => {
+      try {
+        const res  = await fetch(`/api/enrich/status/${jobId}?t=${Date.now()}`)
+        const json = await res.json()
+        if (!json.data) return
+        setJob(json.data.job)
+        setRows(json.data.rows)
+
+        if (json.data.job.stage1_status === 'done' && view === 'stage1') {
+          clearInterval(interval)
+        }
+        if (json.data.job.stage2_status === 'done' && view === 'stage2') {
+          clearInterval(interval)
+        }
+      } catch (e) {
+        console.error('Poll error', e)
+      }
+    }, 2000)
+
+    return () => clearInterval(interval)
+  }, [jobId, view, job?.stage1_status, job?.stage2_status])
 
   async function handleFile(file: File) {
     setUploading(true)
@@ -93,8 +109,9 @@ export default function Home() {
         setUploadError(json.error ?? 'Upload failed')
         return
       }
+      setJob(null)
+      setRows([])
       setJobId(json.data!.job_id)
-      setPollData(null)
       setView('stage1')
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed')
@@ -142,10 +159,10 @@ export default function Home() {
   }
 
   function resetToUpload() {
-    if (intervalRef.current) clearInterval(intervalRef.current)
     setView('upload')
     setJobId(null)
-    setPollData(null)
+    setJob(null)
+    setRows([])
     setUploadError(null)
   }
 
@@ -164,7 +181,7 @@ export default function Home() {
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
-            onClick={() => !uploading && fileInputRef.current?.click()}
+            onClick={() => !uploading && document.getElementById('file-input')?.click()}
             className={[
               'relative flex flex-col items-center justify-center gap-3',
               'rounded-xl border-2 border-dashed p-12 cursor-pointer',
@@ -176,7 +193,7 @@ export default function Home() {
             ].join(' ')}
           >
             <input
-              ref={fileInputRef}
+              id="file-input"
               type="file"
               accept=".csv,text/csv"
               className="hidden"
@@ -201,7 +218,7 @@ export default function Home() {
                 </svg>
                 <p className="font-medium text-gray-700">Drop a CSV or click to upload</p>
                 <p className="text-xs text-gray-400">
-                  Expected columns: <span className="font-mono">Name, Email, Phone, Location, Website</span>
+                  Expected columns: <span className="font-mono">Name, Email, Phone, Location, Website, Company</span>
                 </p>
                 <p className="text-xs text-gray-400">Extra columns are preserved in the output</p>
               </>
@@ -216,16 +233,20 @@ export default function Home() {
 
   // ── State B / C — stage 1 / stage 2 ───────────────────────────────────
 
-  const job  = pollData?.job
-  const rows = pollData?.rows ?? []
+  const isStage2 = view === 'stage2'
 
-  const isStage2  = view === 'stage2'
-  const stage1Done  = job?.stage1_status === 'done'
+  // Fallback: treat as done if every row has completed, even if job status lags
+  const allRowsDone = rows.length > 0 && rows.every(r => r.stage1_completed_at !== null)
+  const stage1Done  = job?.stage1_status === 'done' || allRowsDone
   const stage2Done  = job?.stage2_status === 'done'
   const stage1Error = job?.stage1_status === 'error'
   const stage2Error = job?.stage2_status === 'error'
 
-  const progressValue = isStage2 ? (job?.stage2_enriched ?? 0) : (job?.stage1_matched ?? 0)
+  // Fallback: count from rows if stage1_matched hasn't propagated yet
+  const matchedCount = job?.stage1_matched
+    ?? rows.filter(r => r.match_type !== null && r.match_type !== 'no_match').length
+
+  const progressValue = isStage2 ? (job?.stage2_enriched ?? 0) : matchedCount
   const progressMax   = isStage2 ? (job?.stage1_matched ?? 0) : (job?.total_rows ?? 0)
 
   return (
@@ -373,7 +394,7 @@ export default function Home() {
                       </td>
                       <td className="px-4 py-2.5">
                         <MatchBadge
-                          type={row.stage1_completed_at ? (row.match_type ?? 'no_match') : null}
+                          type={row.stage1_completed_at !== null ? (row.match_type ?? 'no_match') : null}
                         />
                       </td>
                       {isStage2 && (
