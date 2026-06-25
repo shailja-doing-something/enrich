@@ -67,77 +67,67 @@ export default function Home() {
   const [dragging, setDragging]             = useState(false)
   const [stage2Starting, setStage2Starting] = useState(false)
 
-  // Sync ref so poll() can read the current jobId without capturing a stale closure
-  const jobIdRef = useRef<string | null>(null)
-  jobIdRef.current = jobId
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Cleanup on unmount only
   useEffect(() => {
-    if (!jobId) return
-    let stopped = false
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    }
+  }, [])
 
-    async function poll() {
-      if (stopped || !jobIdRef.current) return
+  function startPolling(id: string) {
+    async function tick() {
       try {
-        const res  = await fetch(`/api/enrich/status/${jobIdRef.current}?t=${Date.now()}`)
+        const res  = await fetch(`/api/enrich/status/${id}?t=${Date.now()}`)
         const json = await res.json()
-        if (stopped) return
         if (!json.data) return
-        const j: EnrichJob  = json.data.job
-        const r: EnrichRow[] = json.data.rows
-        setJob(j)
-        setRows(r)
-        if (j.stage2_status === 'done' || j.stage2_status === 'error') {
-          stopped = true
+        setJob({ ...json.data.job })
+        setRows([...json.data.rows])
+        const isDone = json.data.job.stage2_status === 'done'
+          || json.data.job.stage2_status === 'error'
+        if (!isDone) {
+          timeoutRef.current = setTimeout(tick, 2000)
         }
       } catch (e) {
-        console.error('Poll error', e)
+        console.error('poll error', e)
+        timeoutRef.current = setTimeout(tick, 3000)
       }
     }
+    tick()
+  }
 
-    poll()
-    const interval = setInterval(poll, 2000)
-    return () => {
-      stopped = true
-      clearInterval(interval)
-    }
-  }, [jobId]) // ONLY depend on jobId
+  // ── derived state ─────────────────────────────────────────────────────────
 
-  // ── derived state ────────────────────────────────────────────────────────
-
-  const totalRows    = job?.total_rows ?? rows.length
-  const allRowsDone  = rows.length > 0 && rows.every(r => r.stage1_completed_at !== null)
-  const stage1Done   = job?.stage1_status === 'done' || allRowsDone
+  const totalRows    = job?.total_rows ?? 0
+  const matchedCount = job?.stage1_matched ?? 0
+  const progressPct  = totalRows > 0
+    ? Math.min(100, Math.round((matchedCount / totalRows) * 100))
+    : 0
+  const stage1Done   = job?.stage1_status === 'done'
   const stage2Done   = job?.stage2_status === 'done'
   const stage1Running = job?.stage1_status === 'running'
-
-  // Fallback to counting rows if job counter hasn't propagated yet
-  const matchedCount = (job?.stage1_matched != null && job.stage1_matched > 0)
-    ? job.stage1_matched
-    : rows.filter(r => r.match_type !== null && r.match_type !== 'no_match').length
-
-  const progressValue = stage === 'C' ? (job?.stage2_enriched ?? 0) : matchedCount
-  const progressMax   = stage === 'C' ? (job?.stage1_matched ?? matchedCount) : totalRows
 
   // ── handlers ─────────────────────────────────────────────────────────────
 
   async function handleFile(file: File) {
     setUploading(true)
     setError(null)
-    const form = new FormData()
-    form.append('file', file)
+    const formData = new FormData()
+    formData.append('file', file)
     try {
-      const res  = await fetch('/api/enrich/upload', { method: 'POST', body: form })
+      const res  = await fetch('/api/enrich/upload', { method: 'POST', body: formData })
       const json = (await res.json()) as { data?: { job_id: string }; error?: string }
-      if (!res.ok || json.error) {
-        setError(json.error ?? 'Upload failed')
-        return
-      }
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Upload failed')
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+      const newJobId = json.data!.job_id
       setJob(null)
       setRows([])
-      setJobId(json.data!.job_id)
+      setJobId(newJobId)
       setStage('B')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed')
+      startPolling(newJobId) // call directly — do not wait for a useEffect
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Upload failed')
     } finally {
       setUploading(false)
     }
@@ -174,12 +164,14 @@ export default function Home() {
         return
       }
       setStage('C')
+      // polling continues automatically — same timeout loop, now watching stage2_status
     } finally {
       setStage2Starting(false)
     }
   }
 
   function resetToUpload() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
     setStage('A')
     setJobId(null)
     setJob(null)
@@ -256,6 +248,9 @@ export default function Home() {
 
   const isStage2 = stage === 'C'
 
+  const progressValue = isStage2 ? (job?.stage2_enriched ?? 0) : matchedCount
+  const progressMax   = isStage2 ? matchedCount : totalRows
+
   return (
     <main className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-5xl mx-auto">
@@ -283,11 +278,23 @@ export default function Home() {
               {isStage2 ? 'Stage 2 progress' : 'Stage 1 progress'}
             </span>
             <span className="text-sm text-gray-500">
-              {progressValue} / {progressMax}{' '}
-              {isStage2 ? 'enriched' : 'matched'}
+              {isStage2
+                ? `${job?.stage2_enriched ?? 0} / ${matchedCount} enriched`
+                : `${matchedCount} / ${totalRows} matched`}
             </span>
           </div>
-          <ProgressBar value={progressValue} max={progressMax} />
+
+          <div style={{ width: '100%', background: '#e5e7eb', borderRadius: 9999, height: 8 }}>
+            <div
+              style={{
+                width: `${progressPct}%`,
+                background: '#3b82f6',
+                borderRadius: 9999,
+                height: 8,
+                transition: 'width 0.3s',
+              }}
+            />
+          </div>
 
           {!isStage2 && job?.stage1_status === 'error' && (
             <ErrorBanner message="Stage 1 encountered an error. Check server logs." />
@@ -296,12 +303,11 @@ export default function Home() {
             <ErrorBanner message="Stage 2 encountered an error. Check server logs." />
           )}
 
-          {/* Stage 1 running — spinner hint */}
           {!isStage2 && stage1Running && (
             <p className="mt-3 text-xs text-gray-400">Processing rows in batches of 10…</p>
           )}
 
-          {/* Stage 1 done: download + run stage 2 */}
+          {/* Stage 1 done */}
           {!isStage2 && stage1Done && (
             <div className="mt-4 flex gap-3 flex-wrap">
               <a
@@ -321,7 +327,7 @@ export default function Home() {
             </div>
           )}
 
-          {/* Stage 2 done: download + restart */}
+          {/* Stage 2 done */}
           {isStage2 && stage2Done && (
             <div className="mt-4 flex gap-3 flex-wrap">
               <a
@@ -374,9 +380,11 @@ export default function Home() {
                   </tr>
                 ) : (
                   rows.map(row => {
+                    const profile    = row.zillow_profile as Record<string, unknown>
                     const zillowLabel = row.zillow_url
                       ? row.zillow_url.replace('https://www.zillow.com/profile/', '')
                       : null
+                    const completed = row.stage1_completed_at !== null
                     return (
                       <tr key={row.id} className="hover:bg-gray-50">
                         <td className="px-4 py-2.5 text-gray-400 tabular-nums">
@@ -409,29 +417,19 @@ export default function Home() {
                           )}
                         </td>
                         <td className="px-4 py-2.5">
-                          <MatchBadge
-                            type={row.stage1_completed_at !== null ? (row.match_type ?? 'no_match') : null}
-                          />
+                          <MatchBadge type={completed ? (row.match_type ?? 'no_match') : null} />
                         </td>
                         <td className="px-4 py-2.5 text-gray-500 tabular-nums">
-                          {row.stage1_completed_at
-                            ? String((row.zillow_profile as Record<string, unknown>)['rating_average'] ?? '—')
-                            : '—'}
+                          {completed ? String(profile['rating_average'] ?? '—') : '—'}
                         </td>
                         <td className="px-4 py-2.5 text-gray-500 tabular-nums">
-                          {row.stage1_completed_at
-                            ? String((row.zillow_profile as Record<string, unknown>)['sales_last_12_months'] ?? '—')
-                            : '—'}
+                          {completed ? String(profile['sales_last_12_months'] ?? '—') : '—'}
                         </td>
                         <td className="px-4 py-2.5 text-gray-500 max-w-[140px] truncate">
-                          {row.stage1_completed_at
-                            ? String((row.zillow_profile as Record<string, unknown>)['team_name'] ?? '—')
-                            : '—'}
+                          {completed ? String(profile['team_name'] ?? '—') : '—'}
                         </td>
                         <td className="px-4 py-2.5 text-gray-500">
-                          {row.stage1_completed_at
-                            ? ((row.zillow_profile as Record<string, unknown>)['is_team'] ? 'Yes' : 'No')
-                            : '—'}
+                          {completed ? (profile['is_team'] ? 'Yes' : 'No') : '—'}
                         </td>
                         {isStage2 && (
                           <td className="px-4 py-2.5">

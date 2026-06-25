@@ -10,13 +10,18 @@ type LookupResult = {
 export async function runStage1(jobId: string): Promise<void> {
   console.log(`[stage1] Starting for job ${jobId}`)
   try {
-    const { error: startErr } = await supabaseAdmin
+    // Mark running — log 0 rows matched if the update hits no records
+    const { data: runUpdated, error: startErr } = await supabaseAdmin
       .from('enrich_jobs')
       .update({ stage1_status: 'running' })
       .eq('id', jobId)
+      .select('id')
     if (startErr) {
       console.error('[stage1] Failed to set running status:', startErr)
       throw new Error(startErr.message)
+    }
+    if (!runUpdated?.length) {
+      console.error('[stage1] running update matched 0 rows — jobId may be stale:', jobId)
     }
 
     const { data: rows, error: fetchErr } = await supabaseAdmin
@@ -39,13 +44,16 @@ export async function runStage1(jobId: string): Promise<void> {
         if (result.zillow_url !== null) matchedCount++
       }
       // Write live progress after every batch so the UI updates in real time
-      await supabaseAdmin
+      const { data: counterUpdated, error: countError } = await supabaseAdmin
         .from('enrich_jobs')
         .update({ stage1_matched: matchedCount })
         .eq('id', jobId)
+        .select('id')
+      if (countError) console.error('[stage1] counter update failed:', countError)
+      else if (!counterUpdated?.length) console.error('[stage1] counter update matched 0 rows — jobId:', jobId)
     }
 
-    const { error: doneErr } = await supabaseAdmin
+    const { data: doneUpdated, error: doneErr } = await supabaseAdmin
       .from('enrich_jobs')
       .update({
         stage1_status:       'done',
@@ -53,7 +61,9 @@ export async function runStage1(jobId: string): Promise<void> {
         stage1_completed_at: new Date().toISOString(),
       })
       .eq('id', jobId)
+      .select('id')
     if (doneErr) throw new Error(doneErr.message)
+    if (!doneUpdated?.length) console.error('[stage1] done update matched 0 rows — jobId:', jobId)
 
     console.log(`[stage1] Done for job ${jobId} matched=${matchedCount}`)
 
@@ -69,7 +79,7 @@ export async function runStage1(jobId: string): Promise<void> {
 async function processRow(row: EnrichRow): Promise<LookupResult> {
   try {
     const result = await lookupZillowProfile(row)
-    const { error } = await supabaseAdmin
+    const { data: rowUpdated, error } = await supabaseAdmin
       .from('enrich_rows')
       .update({
         zillow_url:          result.zillow_url,
@@ -78,7 +88,9 @@ async function processRow(row: EnrichRow): Promise<LookupResult> {
         stage1_completed_at: new Date().toISOString(),
       })
       .eq('id', row.id)
+      .select('id')
     if (error) console.error(`[stage1] Failed to update row ${row.id}:`, error.message)
+    else if (!rowUpdated?.length) console.error(`[stage1] row update matched 0 rows — rowId may be stale:`, row.id)
     return result
   } catch (err) {
     console.error(`[stage1] processRow crashed for row ${row.id}:`, err)
@@ -105,29 +117,12 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
     } catch (e) { console.error('[lookup] email error', e) }
   }
 
-  // 2. Name + company — fires (name, company) and (company, name) in parallel, takes first hit
-  const name    = (row.name    ?? '').trim()
-  const company = (row.company ?? '').trim()
-  if (name && company) {
-    try {
-      const [resA, resB] = await Promise.all([
-        supabaseAdmin.rpc('find_zillow_by_name_team', { p_name: name,    p_company: company }),
-        supabaseAdmin.rpc('find_zillow_by_name_team', { p_name: company, p_company: name    }),
-      ])
-      if (resA.error) console.error('[lookup] name_team rpc error (A):', resA.error)
-      if (resB.error) console.error('[lookup] name_team rpc error (B):', resB.error)
-      const hit = resA.data ?? resB.data
-      if (hit?.profile_link) {
-        return {
-          zillow_url:    hit.profile_link as string,
-          match_type:    'name_team',
-          zillow_profile: hit as Record<string, unknown>,
-        }
-      }
-    } catch (e) { console.error('[lookup] name_team error', e) }
-  }
+  // 2. Name + company — find_zillow_by_name_team times out (57014) on this DB;
+  //    skip until an index is added to the underlying table
+  // TODO: re-enable when find_zillow_by_name_team has an index
 
-  // 3. Name fuzzy + state (phone lookup removed — phone_cell has no index, times out)
+  // 3. Name fuzzy + state
+  const name = (row.name ?? '').trim()
   if (name) {
     try {
       const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
