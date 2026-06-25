@@ -1,20 +1,25 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { DragEvent, ChangeEvent } from 'react'
 import type { EnrichJob, EnrichRow } from '@/lib/supabase/types'
 
-type View = 'upload' | 'stage1' | 'stage2'
+type Stage = 'A' | 'B' | 'C'
 
 // ── sub-components ─────────────────────────────────────────────────────────
 
 function ProgressBar({ value, max }: { value: number; max: number }) {
   const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0
   return (
-    <div className="w-full bg-gray-200 rounded-full h-2">
+    <div style={{ width: '100%', background: '#e5e7eb', borderRadius: 9999, height: 8 }}>
       <div
-        className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-        style={{ width: `${pct}%` }}
+        style={{
+          width: `${pct}%`,
+          background: '#3b82f6',
+          borderRadius: 9999,
+          height: 8,
+          transition: 'width 0.3s',
+        }}
       />
     </div>
   )
@@ -22,21 +27,29 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
 
 function MatchBadge({ type }: { type: string | null }) {
   if (!type) {
-    return <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-400">pending</span>
+    return (
+      <span style={{ padding: '2px 8px', fontSize: 12, borderRadius: 9999, background: '#f3f4f6', color: '#9ca3af' }}>
+        pending
+      </span>
+    )
   }
-  const styles: Record<string, string> = {
-    email:      'bg-green-100 text-green-700',
-    name_team:  'bg-purple-100 text-purple-700',
-    name_fuzzy: 'bg-yellow-100 text-yellow-700',
-    no_match:   'bg-red-100 text-red-700',
+  const colors: Record<string, { bg: string; color: string }> = {
+    email:      { bg: '#dcfce7', color: '#15803d' },
+    name_team:  { bg: '#f3e8ff', color: '#7e22ce' },
+    name_fuzzy: { bg: '#fef9c3', color: '#a16207' },
+    no_match:   { bg: '#fee2e2', color: '#b91c1c' },
   }
-  const cls = styles[type] ?? 'bg-gray-100 text-gray-500'
-  return <span className={`px-2 py-0.5 text-xs rounded-full ${cls}`}>{type}</span>
+  const c = colors[type] ?? { bg: '#f3f4f6', color: '#6b7280' }
+  return (
+    <span style={{ padding: '2px 8px', fontSize: 12, borderRadius: 9999, background: c.bg, color: c.color }}>
+      {type}
+    </span>
+  )
 }
 
 function ErrorBanner({ message }: { message: string }) {
   return (
-    <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+    <div style={{ marginTop: 16, borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2', padding: '12px 16px', fontSize: 14, color: '#b91c1c' }}>
       {message}
     </div>
   )
@@ -45,76 +58,86 @@ function ErrorBanner({ message }: { message: string }) {
 // ── main page ──────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [view, setView]                     = useState<View>('upload')
+  const [stage, setStage]                   = useState<Stage>('A')
   const [jobId, setJobId]                   = useState<string | null>(null)
   const [job, setJob]                       = useState<EnrichJob | null>(null)
   const [rows, setRows]                     = useState<EnrichRow[]>([])
   const [uploading, setUploading]           = useState(false)
-  const [uploadError, setUploadError]       = useState<string | null>(null)
+  const [error, setError]                   = useState<string | null>(null)
   const [dragging, setDragging]             = useState(false)
   const [stage2Starting, setStage2Starting] = useState(false)
 
-  // Fetch immediately when jobId is set — don't wait 2s for the first poll tick
+  // Sync ref so poll() can read the current jobId without capturing a stale closure
+  const jobIdRef = useRef<string | null>(null)
+  jobIdRef.current = jobId
+
   useEffect(() => {
     if (!jobId) return
-    fetch(`/api/enrich/status/${jobId}?t=${Date.now()}`)
-      .then(r => r.json())
-      .then(json => {
-        if (!json.data) return
-        setJob(json.data.job)
-        setRows(json.data.rows)
-      })
-      .catch(console.error)
-  }, [jobId])
+    let stopped = false
 
-  // Polling — stops automatically when the relevant stage is done
-  useEffect(() => {
-    if (!jobId) return
-    // Don't set up a new interval if stage1 is already done (and we haven't moved to stage2)
-    if (job?.stage1_status === 'done' && view !== 'stage2') return
-    // Don't set up a new interval if stage2 is already done
-    if (job?.stage2_status === 'done') return
-
-    const interval = setInterval(async () => {
+    async function poll() {
+      if (stopped || !jobIdRef.current) return
       try {
-        const res  = await fetch(`/api/enrich/status/${jobId}?t=${Date.now()}`)
+        const res  = await fetch(`/api/enrich/status/${jobIdRef.current}?t=${Date.now()}`)
         const json = await res.json()
+        if (stopped) return
         if (!json.data) return
-        setJob(json.data.job)
-        setRows(json.data.rows)
-
-        if (json.data.job.stage1_status === 'done' && view === 'stage1') {
-          clearInterval(interval)
-        }
-        if (json.data.job.stage2_status === 'done' && view === 'stage2') {
-          clearInterval(interval)
+        const j: EnrichJob  = json.data.job
+        const r: EnrichRow[] = json.data.rows
+        setJob(j)
+        setRows(r)
+        if (j.stage2_status === 'done' || j.stage2_status === 'error') {
+          stopped = true
         }
       } catch (e) {
         console.error('Poll error', e)
       }
-    }, 2000)
+    }
 
-    return () => clearInterval(interval)
-  }, [jobId, view, job?.stage1_status, job?.stage2_status])
+    poll()
+    const interval = setInterval(poll, 2000)
+    return () => {
+      stopped = true
+      clearInterval(interval)
+    }
+  }, [jobId]) // ONLY depend on jobId
+
+  // ── derived state ────────────────────────────────────────────────────────
+
+  const totalRows    = job?.total_rows ?? rows.length
+  const allRowsDone  = rows.length > 0 && rows.every(r => r.stage1_completed_at !== null)
+  const stage1Done   = job?.stage1_status === 'done' || allRowsDone
+  const stage2Done   = job?.stage2_status === 'done'
+  const stage1Running = job?.stage1_status === 'running'
+
+  // Fallback to counting rows if job counter hasn't propagated yet
+  const matchedCount = (job?.stage1_matched != null && job.stage1_matched > 0)
+    ? job.stage1_matched
+    : rows.filter(r => r.match_type !== null && r.match_type !== 'no_match').length
+
+  const progressValue = stage === 'C' ? (job?.stage2_enriched ?? 0) : matchedCount
+  const progressMax   = stage === 'C' ? (job?.stage1_matched ?? matchedCount) : totalRows
+
+  // ── handlers ─────────────────────────────────────────────────────────────
 
   async function handleFile(file: File) {
     setUploading(true)
-    setUploadError(null)
+    setError(null)
     const form = new FormData()
     form.append('file', file)
     try {
       const res  = await fetch('/api/enrich/upload', { method: 'POST', body: form })
       const json = (await res.json()) as { data?: { job_id: string }; error?: string }
       if (!res.ok || json.error) {
-        setUploadError(json.error ?? 'Upload failed')
+        setError(json.error ?? 'Upload failed')
         return
       }
       setJob(null)
       setRows([])
       setJobId(json.data!.job_id)
-      setView('stage1')
+      setStage('B')
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed')
+      setError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
       setUploading(false)
     }
@@ -131,9 +154,7 @@ export default function Home() {
     setDragging(true)
   }
 
-  function onDragLeave() {
-    setDragging(false)
-  }
+  function onDragLeave() { setDragging(false) }
 
   function onDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault()
@@ -152,23 +173,23 @@ export default function Home() {
         console.error('Stage 2 start error:', json.error)
         return
       }
-      setView('stage2')
+      setStage('C')
     } finally {
       setStage2Starting(false)
     }
   }
 
   function resetToUpload() {
-    setView('upload')
+    setStage('A')
     setJobId(null)
     setJob(null)
     setRows([])
-    setUploadError(null)
+    setError(null)
   }
 
-  // ── State A — upload ───────────────────────────────────────────────────
+  // ── Stage A — upload ──────────────────────────────────────────────────────
 
-  if (view === 'upload') {
+  if (stage === 'A') {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="w-full max-w-lg">
@@ -225,29 +246,15 @@ export default function Home() {
             )}
           </div>
 
-          {uploadError && <ErrorBanner message={uploadError} />}
+          {error && <ErrorBanner message={error} />}
         </div>
       </main>
     )
   }
 
-  // ── State B / C — stage 1 / stage 2 ───────────────────────────────────
+  // ── Stage B / C — stage 1 / stage 2 ──────────────────────────────────────
 
-  const isStage2 = view === 'stage2'
-
-  // Fallback: treat as done if every row has completed, even if job status lags
-  const allRowsDone = rows.length > 0 && rows.every(r => r.stage1_completed_at !== null)
-  const stage1Done  = job?.stage1_status === 'done' || allRowsDone
-  const stage2Done  = job?.stage2_status === 'done'
-  const stage1Error = job?.stage1_status === 'error'
-  const stage2Error = job?.stage2_status === 'error'
-
-  // Fallback: count from rows if stage1_matched hasn't propagated yet
-  const matchedCount = job?.stage1_matched
-    ?? rows.filter(r => r.match_type !== null && r.match_type !== 'no_match').length
-
-  const progressValue = isStage2 ? (job?.stage2_enriched ?? 0) : matchedCount
-  const progressMax   = isStage2 ? (job?.stage1_matched ?? 0) : (job?.total_rows ?? 0)
+  const isStage2 = stage === 'C'
 
   return (
     <main className="min-h-screen bg-gray-50 p-6">
@@ -282,11 +289,16 @@ export default function Home() {
           </div>
           <ProgressBar value={progressValue} max={progressMax} />
 
-          {!isStage2 && stage1Error && (
+          {!isStage2 && job?.stage1_status === 'error' && (
             <ErrorBanner message="Stage 1 encountered an error. Check server logs." />
           )}
-          {isStage2 && stage2Error && (
+          {isStage2 && job?.stage2_status === 'error' && (
             <ErrorBanner message="Stage 2 encountered an error. Check server logs." />
+          )}
+
+          {/* Stage 1 running — spinner hint */}
+          {!isStage2 && stage1Running && (
+            <p className="mt-3 text-xs text-gray-400">Processing rows in batches of 10…</p>
           )}
 
           {/* Stage 1 done: download + run stage 2 */}
@@ -361,61 +373,66 @@ export default function Home() {
                     </td>
                   </tr>
                 ) : (
-                  rows.map(row => (
-                    <tr key={row.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-2.5 text-gray-400 tabular-nums">
-                        {row.row_index + 1}
-                      </td>
-                      <td className="px-4 py-2.5 text-gray-700 max-w-[160px] truncate">
-                        {row.name ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-gray-500 max-w-[200px] truncate">
-                        {row.email ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-gray-500 max-w-[140px] truncate">
-                        {row.location ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-gray-500 max-w-[160px] truncate">
-                        {row.company ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 max-w-[200px] truncate">
-                        {row.zillow_url ? (
-                          <a
-                            href={row.zillow_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline text-xs"
-                          >
-                            {row.zillow_url}
-                          </a>
-                        ) : (
-                          <span className="text-gray-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <MatchBadge
-                          type={row.stage1_completed_at !== null ? (row.match_type ?? 'no_match') : null}
-                        />
-                      </td>
-                      {isStage2 && (
-                        <td className="px-4 py-2.5">
-                          {row.stage2_completed_at ? (
-                            <span className="px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700">
-                              done
-                            </span>
-                          ) : row.zillow_url ? (
-                            <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-400">
-                              pending
-                            </span>
+                  rows.map(row => {
+                    const zillowLabel = row.zillow_url
+                      ? row.zillow_url.replace('https://www.zillow.com/profile/', '')
+                      : null
+                    return (
+                      <tr key={row.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-2.5 text-gray-400 tabular-nums">
+                          {row.row_index + 1}
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-700 max-w-[160px] truncate">
+                          {row.name ?? '—'}
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-500 max-w-[200px] truncate">
+                          {row.email ?? '—'}
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-500 max-w-[140px] truncate">
+                          {row.location ?? '—'}
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-500 max-w-[160px] truncate">
+                          {row.company ?? '—'}
+                        </td>
+                        <td className="px-4 py-2.5 max-w-[200px] truncate">
+                          {row.zillow_url ? (
+                            <a
+                              href={row.zillow_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline text-xs"
+                            >
+                              {zillowLabel}
+                            </a>
                           ) : (
-                            <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-300">
-                              —
-                            </span>
+                            <span className="text-gray-300">—</span>
                           )}
                         </td>
-                      )}
-                    </tr>
-                  ))
+                        <td className="px-4 py-2.5">
+                          <MatchBadge
+                            type={row.stage1_completed_at !== null ? (row.match_type ?? 'no_match') : null}
+                          />
+                        </td>
+                        {isStage2 && (
+                          <td className="px-4 py-2.5">
+                            {row.stage2_completed_at ? (
+                              <span style={{ padding: '2px 8px', fontSize: 12, borderRadius: 9999, background: '#dcfce7', color: '#15803d' }}>
+                                done
+                              </span>
+                            ) : row.zillow_url ? (
+                              <span style={{ padding: '2px 8px', fontSize: 12, borderRadius: 9999, background: '#f3f4f6', color: '#9ca3af' }}>
+                                pending
+                              </span>
+                            ) : (
+                              <span style={{ padding: '2px 8px', fontSize: 12, borderRadius: 9999, background: '#f3f4f6', color: '#d1d5db' }}>
+                                —
+                              </span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    )
+                  })
                 )}
               </tbody>
             </table>
