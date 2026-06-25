@@ -98,47 +98,86 @@ async function processRow(row: EnrichRow): Promise<LookupResult> {
   }
 }
 
+type ProfileRow = { profile_link?: string } & Record<string, unknown>
+
 async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
-  console.log(`[lookup] row=${row.id} email=${row.email} name=${row.name} company=${row.company}`)
+  const name      = (row.name    ?? '').trim()
+  const email     = (row.email   ?? '').trim()
+  const company   = (row.company ?? '').trim()
+  const rawPhone  = (row.phone   ?? '').replace(/\D/g, '').slice(-10)
+  const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
+  const stateCode  = stateMatch?.[1] ?? ''
 
-  // 1. Email
-  if ((row.email ?? '').trim()) {
+  console.log(`[lookup] row=${row.id} email=${email} name=${name} company=${company} phone=${rawPhone} state=${stateCode}`)
+
+  async function rpc(rpcName: string, params: Record<string, unknown>): Promise<ProfileRow | null> {
     try {
-      const { data, error } = await supabaseAdmin
-        .rpc('find_zillow_by_email', { p_email: row.email!.trim() })
-      if (error) console.error('[lookup] email rpc error:', error)
-      if (!error && data?.profile_link) {
-        return {
-          zillow_url:    data.profile_link as string,
-          match_type:    'email',
-          zillow_profile: data as Record<string, unknown>,
-        }
-      }
-    } catch (e) { console.error('[lookup] email error', e) }
+      const { data, error } = await supabaseAdmin.rpc(rpcName, params)
+      if (error) { console.error(`[lookup] ${rpcName} error`, error); return null }
+      return data as ProfileRow | null
+    } catch (e) { console.error(`[lookup] ${rpcName} threw`, e); return null }
   }
 
-  // 2. Name + company — find_zillow_by_name_team times out (57014) on this DB;
-  //    skip until an index is added to the underlying table
-  // TODO: re-enable when find_zillow_by_name_team has an index
+  // Step 1: Email + Company fuzzy
+  if (email && company) {
+    const data = await rpc('find_zillow_by_email_company', { p_email: email, p_company: company })
+    if (data?.profile_link) return {
+      zillow_url:    data.profile_link,
+      match_type:    'email_company',
+      zillow_profile: data,
+    }
+  }
 
-  // 3. Name fuzzy + state
-  const name = (row.name ?? '').trim()
+  // Step 2: Email only
+  if (email) {
+    const data = await rpc('find_zillow_by_email', { p_email: email })
+    if (data?.profile_link) return {
+      zillow_url:    data.profile_link,
+      match_type:    'email',
+      zillow_profile: data,
+    }
+  }
+
+  // Step 3: Name fuzzy + Company fuzzy
+  if (name && company) {
+    const data = await rpc('find_zillow_by_name_team', { p_name: name, p_company: company })
+    if (data?.profile_link) return {
+      zillow_url:    data.profile_link,
+      match_type:    'name_team',
+      zillow_profile: data,
+    }
+  }
+
+  // Step 4: Phone + Email
+  if (rawPhone.length === 10 && email) {
+    const data = await rpc('find_zillow_by_phone_email', { p_phone: rawPhone, p_email: email })
+    if (data?.profile_link) return {
+      zillow_url:    data.profile_link,
+      match_type:    'phone_email',
+      zillow_profile: data,
+    }
+  }
+
+  // Step 5: Name fuzzy + Company fuzzy + State
+  if (name && company && stateCode) {
+    const data = await rpc('find_zillow_by_name_company_state', { p_name: name, p_company: company, p_state: stateCode })
+    if (data?.profile_link) return {
+      zillow_url:    data.profile_link,
+      match_type:    'name_company_state',
+      zillow_profile: data,
+    }
+  }
+
+  // Step 6: Name fuzzy + State
   if (name) {
-    try {
-      const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
-      const stateCode  = stateMatch?.[1] ?? ''
-      const { data, error } = await supabaseAdmin
-        .rpc('find_zillow_by_name_state', { p_name: name, p_state: stateCode })
-      if (error) console.error('[lookup] name_fuzzy rpc error:', error)
-      if (!error && data?.profile_link) {
-        return {
-          zillow_url:    data.profile_link as string,
-          match_type:    'name_fuzzy',
-          zillow_profile: data as Record<string, unknown>,
-        }
-      }
-    } catch (e) { console.error('[lookup] name_fuzzy error', e) }
+    const data = await rpc('find_zillow_by_name_state', { p_name: name, p_state: stateCode })
+    if (data?.profile_link) return {
+      zillow_url:    data.profile_link,
+      match_type:    'name_fuzzy',
+      zillow_profile: data,
+    }
   }
 
+  // Step 7: No match
   return { zillow_url: null, match_type: 'no_match', zillow_profile: {} }
 }
