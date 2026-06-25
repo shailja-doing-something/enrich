@@ -1,102 +1,30 @@
-export type GenericFormattedRow = {
-  name: string
-  email: string
-  phone: string
-  team_name: string
-  brokerage: string
-  website: string
-  location: string
-  hs_ticket_url: string
-}
-
-export type ColumnMappingField = {
-  source_column: string | null
-  confidence: 'high' | 'medium' | 'low' | 'none'
-}
-
-export type ColumnMapping = {
-  name: ColumnMappingField
-  email: ColumnMappingField
-  phone: ColumnMappingField
-  team_name: ColumnMappingField
-  brokerage: ColumnMappingField
-  website: ColumnMappingField
-  location: ColumnMappingField
-}
-
-export type ListType = 'A' | 'B' | 'C' | 'D' | 'E'
-
-export type ColumnMappingReportEntry = {
-  targetField: keyof ColumnMapping
-  sourceColumn: string
-  confidence: ColumnMappingField['confidence']
-}
-
-export type ColumnMappingReport = {
-  mapped: ColumnMappingReportEntry[]
-  absent: (keyof ColumnMapping)[]
-}
-
 export type EnrichJob = {
   id: string
+  filename: string
+  total_rows: number
+  stage1_status: 'pending' | 'running' | 'done' | 'error'
+  stage1_matched: number
+  stage1_completed_at: string | null
+  stage2_status: 'pending' | 'running' | 'done' | 'error'
+  stage2_enriched: number
+  stage2_completed_at: string | null
   created_at: string
-  updated_at: string
-  sheet_url: string
-  raw_row_count: number | null
-  parsed_at: string | null
-  column_mapping: ColumnMapping | null
-  mapping_confirmed: boolean
-  list_type: ListType | null
-  column_mapping_report: ColumnMappingReport | null
-  source_headers: string[] | null
-  raw_csv: string | null
-  hs_ticket_url: string | null
-  status: 'pending' | 'parsing' | 'mapping' | 'awaiting_confirmation' |
-          'generating' | 'ready' | 'stage1_running' | 'stage2_running' |
-          'both_running' | 'branch1_running' | 'branch2_running' |
-          'merging' | 'complete' | 'failed'
-  branch1_status: 'idle' | 'running' | 'complete' | 'failed'
-  branch2_status: 'idle' | 'running' | 'complete' | 'failed'
-  branch1_completed_at: string | null
-  branch2_completed_at: string | null
-  branch1_found_count: number | null
-  branch2_found_count: number | null
-  hubspot_written_at: string | null
-  error_log: string | null
-  approval_status: 'approved' | null
-  approved_at: string | null
 }
 
 export type EnrichRow = {
   id: string
   job_id: string
   row_index: number
-  hs_ticket_url: string
-  raw_data: Record<string, string>
-  formatted_input: GenericFormattedRow | null
-  enriched_data: Record<string, unknown> | null
-  enrichment_status: 'pending' | 'found' | 'not_found'
-  stage_reached: number | null
-  team_size_data: Record<string, unknown> | null
-  contact_data: Record<string, unknown> | null
-  branch1_status: 'pending' | 'running' | 'found' | 'not_found' | 'failed'
-  branch2_status: 'pending' | 'running' | 'found' | 'not_found' | 'failed'
-  merged_data: Record<string, unknown> | null
-  // QA fields — populated by prioritizeRows() before enrichment runs
-  priority_tier: 'P1' | 'P2' | 'P3' | 'Rejected' | 'Excluded' | null
-  rejected: boolean | null
-  rejection_reason: string | null
-  needs_review: boolean | null
-  work_email: boolean | null
-  inferred_website: string | null
-  inferred_company: string | null
-  team_name_normalized: string | null
-}
-
-export type InsertEnrichRow = {
-  job_id: string
-  row_index: number
-  hs_ticket_url: string
-  raw_data: Record<string, string>
-  formatted_input: GenericFormattedRow
+  name: string | null
+  email: string | null
+  phone: string | null
+  location: string | null
+  website: string | null
+  extra_fields: Record<string, unknown>
+  zillow_url: string | null
+  match_type: 'email' | 'phone' | 'name_fuzzy' | 'no_match' | null
+  zillow_profile: Record<string, unknown>
+  stage1_completed_at: string | null
+  stage2_completed_at: string | null
+  created_at: string
 }

@@ -1,64 +1,111 @@
 # Enrich
 
-Internal GTM AI tool for Fello.ai that automates HubSpot ticket enrichment. A user uploads a CSV, Gemini maps source columns to known target fields, the user confirms the mapping, and Enrich generates a single generic formatted sheet stored in Supabase. Three sequential enrichment stages then run against each row.
+Internal GTM tool for Fello.ai. A user uploads a CSV of real estate contacts; the tool looks up each contact in the Zillow agent profiles database (Stage 1), then enriches matched rows with full agent detail (Stage 2, stub). No LLM, no HubSpot integration, no column mapping — the CSV schema is fixed.
 
 ## Tech Stack
 - **Framework**: Next.js 14 App Router, TypeScript (strict)
-- **Database**: Supabase (PostgreSQL) — shared project with BillFlow, tables prefixed `enrich_`
+- **Primary DB**: Supabase — `enrich_jobs` + `enrich_rows` tables (main Enrich project)
+- **Zillow DB**: Separate Supabase project (`ofpbfajzbuoxrmphthyr.supabase.co`) — `public.zillow_agent_profiles`
 - **DB client**: `@supabase/supabase-js` — no ORM, no Prisma
-- **LLM**: Gemini API (`gemini-2.5-flash`) via `@google/generative-ai` — header mapping only
 - **CSV**: `papaparse`
-- **Infra**: Railway + Supabase Edge Functions
+- **Infra**: Railway
 
 ## Directory Structure
 ```
 enrich/
 ├── app/
-│   ├── api/enrich/         # Route handlers (start, confirm, status, jobs)
-│   └── page.tsx            # Dashboard
+│   ├── api/enrich/
+│   │   ├── upload/route.ts          # POST — CSV upload, creates job, fires Stage 1
+│   │   ├── status/[jobId]/route.ts  # GET  — job + rows polling endpoint
+│   │   ├── stage2/[jobId]/route.ts  # POST — triggers Stage 2 (stub)
+│   │   └── export/[jobId]/route.ts  # GET  — CSV download (?stage=1 or ?stage=2)
+│   ├── page.tsx                     # Single-page dashboard (upload → stage1 → stage2)
+│   └── globals.css
 ├── lib/
-│   ├── supabase/           # client, types, jobs, rows
-│   ├── env.ts              # Lazy env var getters
-│   └── enrichment/
-│       ├── columnDetector.ts  # Gemini call + confidence scoring
-│       └── columnMapper.ts    # Confirmed mapping → GenericFormattedRow
-├── supabase/functions/
-│   └── generate-enrich-rows/ # Edge Function: CSV → formatted_input rows
-├── docs/
+│   ├── env.ts                       # Lazy env var getters
+│   ├── supabase/
+│   │   ├── client.ts                # supabaseAdmin (main project)
+│   │   ├── zillowClient.ts          # zillowDb (Zillow project)
+│   │   └── types.ts                 # EnrichJob, EnrichRow TypeScript types
+│   ├── csv/
+│   │   ├── parse.ts                 # parseCSV — CSV text → ParsedRow[]
+│   │   └── export.ts                # buildStage1CSV, buildStage2CSV
+│   └── pipeline/
+│       ├── stage1.ts                # runStage1 — Zillow lookup per row
+│       └── stage2.ts                # runStage2 — agent detail stub
+├── supabase/
+│   └── migrations/
+│       └── 001_enrich_overhaul.sql  # Apply in Supabase dashboard
 └── CLAUDE.md
 ```
 
+## Fixed CSV Schema
+Input columns (case-insensitive, whitespace-trimmed):
+
+| Column   | Maps to          |
+|----------|------------------|
+| Name     | `name`           |
+| Email    | `email`          |
+| Phone    | `phone`          |
+| Location | `location`       |
+| Website  | `website`        |
+
+Any other column is preserved verbatim in `extra_fields` (JSONB) and carried through to both CSV exports. Rows with no Name AND no Email are dropped.
+
+## Two Supabase Projects
+
+| Client          | Project                                        | Used for                        |
+|-----------------|------------------------------------------------|---------------------------------|
+| `supabaseAdmin` | Main Enrich project (`NEXT_PUBLIC_SUPABASE_URL`) | `enrich_jobs`, `enrich_rows`   |
+| `zillowDb`      | `ofpbfajzbuoxrmphthyr.supabase.co`             | `public.zillow_agent_profiles` |
+
+Both clients are lazy-initialized via `Proxy` — safe for `next build` even without env vars.
+
+## Stage 1 Lookup Priority (per row)
+Tries in this order, returns on first hit:
+
+1. **Email** — `.ilike('email', row.email)` on `zillow_agent_profiles` — `match_type: 'email'`
+2. **Phone** — strips non-digits, takes last 10 digits, `.eq('phone_cell', normalized)` — `match_type: 'phone'`
+3. **Name + state fuzzy** — requires `row.location` to end with `, XX` (2-letter state); `.ilike('full_name', '%name%').eq('address_state', state)` — `match_type: 'name_fuzzy'`
+4. **No match** — `match_type: 'no_match'`, `zillow_url: null`
+
+Stage 1 processes rows in batches of 10 (`Promise.all`). On completion it counts matched rows and updates `enrich_jobs.stage1_matched`.
+
+## Stage 2 (stub)
+Stage 2 is a placeholder. It marks every `zillow_url IS NOT NULL` row as processed (`stage2_completed_at = now()`) and logs "Stage 2 table TBD". Replace `enrichRow()` in `lib/pipeline/stage2.ts` when the agent detail table is available.
+
 ## Pipeline Architecture
 ```
-Upload CSV → Gemini maps headers → User reviews → "Approve and submit"
-     ↓
-POST /api/enrich/save-and-run
-  - Records mapping_confirmed=true, list_type, column_mapping_report
-  - Records approval_status='approved', approved_at=now()
-  - Status stays: awaiting_confirmation
-  - Returns { data: { jobId, approval_status: 'approved' } }
-     ↓
-UI shows: "List approved. Ready for enrichment pipeline."
-  (polling stops — no downstream trigger from this codebase)
+POST /api/enrich/upload
+  ├── parseCSV(text)          → ParsedRow[]
+  ├── INSERT enrich_jobs      → job_id
+  ├── INSERT enrich_rows      → one row per ParsedRow
+  └── runStage1(jobId) [fire-and-forget]
+        └── lookupZillowProfile(row) × N (batches of 10)
+              Writes: zillow_url, match_type, stage1_completed_at
 
-Downstream (pending new pipeline integration):
-  Row generation → Branch 1 team-size → Branch 2 contact → merge → HubSpot write
-  Route files exist in app/api/enrich/ but are not wired to any upstream trigger.
+GET /api/enrich/status/[jobId]   → { job: EnrichJob, rows: EnrichRow[] }
+  (polled every 2s by UI)
+
+POST /api/enrich/stage2/[jobId]  → fires runStage2 [fire-and-forget]
+
+GET /api/enrich/export/[jobId]?stage=1|2  → CSV download
 ```
-
-## GenericFormattedRow (single template, always 8 fields)
-`name, email, phone, team_name, brokerage, website, location, hs_ticket_url`
-
-- `hs_ticket_url` is never detected by Gemini — always stamped from user input
-- Missing source columns → empty string (template shape is always complete)
 
 ## Key Commands
 ```bash
-npm run dev           # Start local dev server (port 3000)
-npm run build         # Production build
-npm run lint          # ESLint
-npm run test          # vitest run
-supabase functions deploy generate-enrich-rows
+npm run dev    # Start local dev server (port 3000)
+npm run build  # Production build (must exit 0)
+npm run lint   # ESLint
+npm run test   # vitest (tests need to be written)
+```
+
+## Env Vars (add to .env.local)
+```
+NEXT_PUBLIC_SUPABASE_URL=   # Main Enrich project URL
+SUPABASE_SERVICE_ROLE_KEY=  # Main Enrich project service role key
+ZILLOW_SUPABASE_URL=https://ofpbfajzbuoxrmphthyr.supabase.co
+ZILLOW_SUPABASE_KEY=        # Zillow project service role key
 ```
 
 ## Coding Conventions
@@ -67,34 +114,19 @@ supabase functions deploy generate-enrich-rows
 - Zod validation on every route handler input — no exceptions
 - No `any` — use `unknown` + narrowing
 - Supabase errors: always check `{ data, error }` destructure; never assume success
-- No raw SQL — use Supabase query builder only
-
-## Architecture Decisions
-- **Gemini on headers only**: 7 strings sent to LLM, never data rows — zero PII exposure
-- **hs_ticket_url excluded from mapping**: collected on upload form, stamped server-side
-- **Single pipeline**: no branches — one formatted_input per row feeds all three stages
-- **Edge Function for row generation**: avoids Railway timeout on large CSVs
-- **Shared Supabase project**: same dashboard as BillFlow, `enrich_` prefix isolates tables
-
-## External Integrations
-| Service | Stage | Connection |
-|---|---|---|
-| Gemini API | Upload | `@google/generative-ai`, key via `GEMINI_API_KEY` |
-| Supabase | All | `@supabase/supabase-js`, service role key for server writes |
-| Stage 1 endpoint | Stage 1 | TBD |
-| Stage 2 DB lookup | Stage 2 | TBD |
-| Stage 3 scraper | Stage 3 | TBD |
-| HubSpot API | Final | REST via `HUBSPOT_API_KEY` |
+- No raw SQL — Supabase query builder only
+- Both Supabase clients use lazy Proxy pattern — never call `createClient()` at module top level
 
 ## What NOT To Do
-- Do not send data rows to Gemini — headers only, always
-- Do not add tables, fields, or logic beyond what is specified — ask first
+- Do not add Gemini, HubSpot, or column mapping logic — the CSV schema is fixed
+- Do not add tables, fields, or routes beyond what is specified — ask first
 - Do not use Prisma or any ORM — Supabase client only
-- Do not hardcode column names — all mappings are Gemini-generated and DB-stored
+- Do not call `process.env` directly — always go through `lib/env.ts`
+- Do not eagerly initialize Supabase clients — use the Proxy pattern in `client.ts`
 
 ## Detailed Docs
-- @docs/architecture.md — system design, component map, data flow
-- @docs/db-schema.md — all tables, fields, relationships, indexes
-- @docs/guidelines.md — contribution rules, PR standards, security
-- @docs/lessons-learned.md — gotchas, decisions, what worked/didn't
+- @docs/architecture.md — system design (may be stale post-overhaul)
+- @docs/db-schema.md — table definitions (see migration for current schema)
+- @docs/guidelines.md — contribution rules, PR standards
+- @docs/lessons-learned.md — gotchas and decisions
 - @docs/release-notes.md — changelog

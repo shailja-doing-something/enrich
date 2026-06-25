@@ -4,24 +4,9 @@ function required(name: string): string {
   return value
 }
 
-function optional(name: string): string {
-  return process.env[name] ?? ''
-}
-
 export const env = {
-  get NEXT_PUBLIC_SUPABASE_URL() { return required('NEXT_PUBLIC_SUPABASE_URL') },
-  get NEXT_PUBLIC_SUPABASE_ANON_KEY() { return required('NEXT_PUBLIC_SUPABASE_ANON_KEY') },
-  get SUPABASE_SERVICE_ROLE_KEY() { return required('SUPABASE_SERVICE_ROLE_KEY') },
-  get GEMINI_API_KEY() { return required('GEMINI_API_KEY') },
-  get HUBSPOT_API_KEY() { return optional('HUBSPOT_API_KEY') },
-  get N8N_ZILLOW_WEBHOOK_URL() { return optional('N8N_ZILLOW_WEBHOOK_URL') },
-  get N8N_WEBHOOK_SECRET() { return optional('N8N_WEBHOOK_SECRET') },
-  get TEAM_SIZE_SERVICE_URL() { return optional('TEAM_SIZE_SERVICE_URL') },
-  get ZILLOW_ZIP_API_KEY() { return required('ZILLOW_ZIP_API_KEY') },
-  get APP_URL() { return optional('APP_URL') },
-  get NEXT_PUBLIC_APP_URL() { return process.env.NEXT_PUBLIC_APP_URL ?? 'https://enrich-production-1129.up.railway.app' },
-  get OXYLABS_USERNAME() { return required('OXYLABS_USERNAME') },
-  get OXYLABS_PASSWORD() { return required('OXYLABS_PASSWORD') },
-  get ANTHROPIC_API_KEY() { return required('ANTHROPIC_API_KEY') },
-  get FUNCTION_SECRET() { return required('FUNCTION_SECRET') },
+  get SUPABASE_URL()        { return required('NEXT_PUBLIC_SUPABASE_URL') },
+  get SUPABASE_SERVICE_KEY(){ return required('SUPABASE_SERVICE_ROLE_KEY') },
+  get ZILLOW_SUPABASE_URL() { return required('ZILLOW_SUPABASE_URL') },
+  get ZILLOW_SUPABASE_KEY() { return required('ZILLOW_SUPABASE_KEY') },
 }
