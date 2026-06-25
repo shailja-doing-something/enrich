@@ -315,7 +315,7 @@ export default function Home() {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {['#', 'Name', 'Email', 'Location', 'Zillow URL', 'Match'].map(h => (
+                  {['#', 'Name', 'Email', 'Location', 'Company', 'Zillow URL', 'Match'].map(h => (
                     <th
                       key={h}
                       className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
@@ -334,7 +334,7 @@ export default function Home() {
                 {rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={isStage2 ? 7 : 6}
+                      colSpan={isStage2 ? 8 : 7}
                       className="px-4 py-8 text-center text-gray-400 text-sm"
                     >
                       Waiting for rows…
@@ -354,6 +354,9 @@ export default function Home() {
                       </td>
                       <td className="px-4 py-2.5 text-gray-500 max-w-[140px] truncate">
                         {row.location ?? '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-500 max-w-[160px] truncate">
+                        {row.company ?? '—'}
                       </td>
                       <td className="px-4 py-2.5 max-w-[200px] truncate">
                         {row.zillow_url ? (

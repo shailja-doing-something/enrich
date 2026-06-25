@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
     phone:        row.phone    || null,
     location:     row.location || null,
     website:      row.website  || null,
+    company:      row.company  || null,
     extra_fields: row.extra_fields,
   }))
 

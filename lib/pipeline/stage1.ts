@@ -85,22 +85,23 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
     if (link) return { zillow_url: link, match_type: 'email' }
   }
 
-  // 2. Name + team name (queries A and B run simultaneously)
-  if (row.name) {
-    const name = row.name.trim()
+  // 2. Name + company (queries A and B run simultaneously; skip if company is empty)
+  if (row.name && row.company) {
+    const name    = row.name.trim()
+    const company = row.company.trim()
     const [resA, resB] = await Promise.all([
       zillowDb
         .from('zillow_agent_profiles')
         .select('profile_link')
         .ilike('full_name', `%${name}%`)
-        .ilike('team_name', `%${name}%`)
+        .ilike('team_name', `%${company}%`)
         .limit(1)
         .maybeSingle(),
       zillowDb
         .from('zillow_agent_profiles')
         .select('profile_link')
         .ilike('full_name', `%${name}%`)
-        .ilike('business_name', `%${name}%`)
+        .ilike('business_name', `%${company}%`)
         .limit(1)
         .maybeSingle(),
     ])

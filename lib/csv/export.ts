@@ -11,6 +11,7 @@ export function buildStage1CSV(rows: EnrichRow[]): string {
       Phone:    row.phone    ?? '',
       Location: row.location ?? '',
       Website:  row.website  ?? '',
+      Company:  row.company  ?? '',
     }
     for (const key of extraKeys) {
       record[key] = stringify(row.extra_fields[key])
@@ -34,6 +35,7 @@ export function buildStage2CSV(rows: EnrichRow[]): string {
       Phone:    row.phone    ?? '',
       Location: row.location ?? '',
       Website:  row.website  ?? '',
+      Company:  row.company  ?? '',
     }
     for (const key of extraKeys) {
       record[key] = stringify(row.extra_fields[key])

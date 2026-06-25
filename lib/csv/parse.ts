@@ -6,6 +6,7 @@ export type ParsedRow = {
   phone: string
   location: string
   website: string
+  company: string
   extra_fields: Record<string, string>
 }
 
@@ -15,6 +16,11 @@ const KNOWN_COLUMNS: Record<string, keyof Omit<ParsedRow, 'extra_fields'>> = {
   phone: 'phone',
   location: 'location',
   website: 'website',
+  company: 'company',
+  team: 'company',
+  'team name': 'company',
+  brokerage: 'company',
+  organization: 'company',
 }
 
 export function parseCSV(text: string): ParsedRow[] {
@@ -44,6 +50,7 @@ export function parseCSV(text: string): ParsedRow[] {
           phone:    known.phone    ?? '',
           location: known.location ?? '',
           website:  known.website  ?? '',
+          company:  known.company  ?? '',
           extra_fields,
         }
       })

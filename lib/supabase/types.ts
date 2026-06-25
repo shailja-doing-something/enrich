@@ -20,6 +20,7 @@ export type EnrichRow = {
   phone: string | null
   location: string | null
   website: string | null
+  company: string | null
   extra_fields: Record<string, unknown>
   zillow_url: string | null
   match_type: 'email' | 'name_team' | 'phone' | 'name_fuzzy' | 'no_match' | null
