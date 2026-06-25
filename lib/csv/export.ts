@@ -62,5 +62,6 @@ function collectKeys(rows: EnrichRow[], field: 'extra_fields' | 'zillow_profile'
 function stringify(value: unknown): string {
   if (value == null) return ''
   if (typeof value === 'string') return value
+  if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }

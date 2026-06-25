@@ -1,5 +1,4 @@
 import { supabaseAdmin } from '@/lib/supabase/client'
-import { zillowDb } from '@/lib/supabase/zillowClient'
 import type { EnrichRow } from '@/lib/supabase/types'
 
 type LookupResult =
@@ -16,17 +15,6 @@ export async function runStage1(jobId: string): Promise<void> {
     if (startErr) {
       console.error('[stage1] Failed to set running status:', startErr)
       throw new Error(startErr.message)
-    }
-
-    // Verify Zillow DB connectivity before processing rows
-    try {
-      const { count, error: pingErr } = await zillowDb
-        .from('zillow_agent_profiles')
-        .select('*', { count: 'exact', head: true })
-      if (pingErr) console.error('[stage1] Zillow DB connectivity error:', pingErr)
-      else console.log(`[stage1] Zillow DB reachable, approx rows=${count}`)
-    } catch (e) {
-      console.error('[stage1] Zillow DB connectivity check threw:', e)
     }
 
     const { data: rows, error: fetchErr } = await supabaseAdmin
@@ -58,9 +46,9 @@ export async function runStage1(jobId: string): Promise<void> {
     const { error: doneErr } = await supabaseAdmin
       .from('enrich_jobs')
       .update({
-        stage1_status:        'done',
-        stage1_matched:       matchedCount,
-        stage1_completed_at:  new Date().toISOString(),
+        stage1_status:       'done',
+        stage1_matched:      matchedCount,
+        stage1_completed_at: new Date().toISOString(),
       })
       .eq('id', jobId)
     if (doneErr) throw new Error(doneErr.message)
@@ -100,62 +88,43 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
 
   // 1. Email
   if ((row.email ?? '').trim()) {
-    const { data, error } = await zillowDb
-      .from('zillow_agent_profiles')
-      .select('profile_link')
-      .ilike('email', row.email!.trim())
-      .limit(1)
-      .maybeSingle()
-    if (error) console.error('[lookup] email query error:', error)
-    if (profileLink(data)) return { zillow_url: profileLink(data)!, match_type: 'email' }
+    try {
+      const { data, error } = await supabaseAdmin
+        .rpc('find_zillow_by_email', { p_email: row.email!.trim() })
+      if (error) console.error('[lookup] email rpc error:', error)
+      if (!error && data?.profile_link) {
+        return { zillow_url: data.profile_link as string, match_type: 'email' }
+      }
+    } catch (e) { console.error('[lookup] email error', e) }
   }
 
   // 2. Name + company (skip if either is empty)
   const name    = (row.name    ?? '').trim()
   const company = (row.company ?? '').trim()
   if (name && company) {
-    const [resA, resB] = await Promise.all([
-      zillowDb
-        .from('zillow_agent_profiles')
-        .select('profile_link')
-        .ilike('full_name',  `%${name}%`)
-        .ilike('team_name',  `%${company}%`)
-        .limit(1)
-        .maybeSingle(),
-      zillowDb
-        .from('zillow_agent_profiles')
-        .select('profile_link')
-        .ilike('full_name',     `%${name}%`)
-        .ilike('business_name', `%${company}%`)
-        .limit(1)
-        .maybeSingle(),
-    ])
-    if (resA.error) console.error('[lookup] name_team A query error:', resA.error)
-    if (resB.error) console.error('[lookup] name_team B query error:', resB.error)
-    const hit = profileLink(resA.data) ?? profileLink(resB.data)
-    if (hit) return { zillow_url: hit, match_type: 'name_team' }
+    try {
+      const { data, error } = await supabaseAdmin
+        .rpc('find_zillow_by_name_team', { p_name: name, p_company: company })
+      if (error) console.error('[lookup] name_team rpc error:', error)
+      if (!error && data?.profile_link) {
+        return { zillow_url: data.profile_link as string, match_type: 'name_team' }
+      }
+    } catch (e) { console.error('[lookup] name_team error', e) }
   }
 
   // 3. Name fuzzy + state (phone lookup removed — phone_cell has no index, times out)
   if (name) {
-    const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
-    const stateCode  = stateMatch?.[1] ?? null
-    const base = zillowDb
-      .from('zillow_agent_profiles')
-      .select('profile_link')
-      .ilike('full_name', `%${name}%`)
-    const { data, error } = await (stateCode
-      ? base.eq('address_state', stateCode).limit(1).maybeSingle()
-      : base.limit(1).maybeSingle())
-    if (error) console.error('[lookup] name_fuzzy query error:', error)
-    if (profileLink(data)) return { zillow_url: profileLink(data)!, match_type: 'name_fuzzy' }
+    try {
+      const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
+      const stateCode  = stateMatch?.[1] ?? ''
+      const { data, error } = await supabaseAdmin
+        .rpc('find_zillow_by_name_state', { p_name: name, p_state: stateCode })
+      if (error) console.error('[lookup] name_fuzzy rpc error:', error)
+      if (!error && data?.profile_link) {
+        return { zillow_url: data.profile_link as string, match_type: 'name_fuzzy' }
+      }
+    } catch (e) { console.error('[lookup] name_fuzzy error', e) }
   }
 
   return { zillow_url: null, match_type: 'no_match' }
-}
-
-function profileLink(data: unknown): string | null {
-  if (!data) return null
-  const link = (data as Record<string, unknown>)['profile_link']
-  return typeof link === 'string' && link ? link : null
 }
