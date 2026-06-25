@@ -7,6 +7,7 @@ type LookupResult =
   | { zillow_url: null;    match_type: 'no_match' }
 
 export async function runStage1(jobId: string): Promise<void> {
+  console.log(`[Stage1] Starting for job ${jobId}`)
   try {
     const { error: startErr } = await supabaseAdmin
       .from('enrich_jobs')

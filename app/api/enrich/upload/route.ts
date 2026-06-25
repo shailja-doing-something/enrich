@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { parseCSV } from '@/lib/csv/parse'
-import { runStage1 } from '@/lib/pipeline/stage1'
+import { env } from '@/lib/env'
 
 export async function POST(request: NextRequest) {
   let formData: FormData
@@ -57,9 +57,14 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Failed to insert rows' }, { status: 500 })
   }
 
-  runStage1(jobId).catch(err =>
-    console.error('[upload] runStage1 fire-and-forget error:', err)
-  )
+  // Fire Stage 1 as its own request so it gets a full lifecycle on Railway.
+  // A bare function call gets killed when this response is sent.
+  const proto   = request.headers.get('x-forwarded-proto') ?? 'http'
+  const host    = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? 'localhost:3000'
+  const baseUrl = env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`
+
+  fetch(`${baseUrl}/api/enrich/run/${jobId}`, { method: 'POST' })
+    .catch(err => console.error('[upload] failed to trigger run route:', err))
 
   return Response.json({ data: { job_id: jobId } })
 }
