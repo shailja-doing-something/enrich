@@ -25,7 +25,9 @@ export type EnrichRow = {
   zillow_url: string | null
   match_type: 'email_company' | 'email' | 'name_team' | 'website' | 'phone_name' | 'name_company_state' | 'name_fuzzy' | 'no_match' | null
   zillow_profile: Record<string, unknown>
-  stage1_completed_at: string | null
-  stage2_completed_at: string | null
+  stage1_completed_at:         string | null
+  stage2_completed_at:         string | null
+  stage2_team_size:            number | null
+  stage2_team_size_confidence: string | null
   created_at: string
 }

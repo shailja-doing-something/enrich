@@ -68,8 +68,8 @@ export function buildStage2CSV(rows: EnrichRow[]): string {
       record[`zillow_${col}`] = stringify(profile?.[col])
     }
 
-    // TODO: populated by Stage 2 team size enrichment
-    record['zillow_team_size_data'] = ''
+    record['Team Size']            = row.stage2_team_size            != null ? String(row.stage2_team_size) : ''
+    record['Team Size Confidence'] = row.stage2_team_size_confidence ?? ''
     return record
   })
 

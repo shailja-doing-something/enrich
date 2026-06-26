@@ -376,7 +376,7 @@ export default function Home() {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {['#', 'Name', 'Email', 'Location', 'Company', 'Zillow URL', 'Match', 'Rating', 'Sales (12M)', 'Team', 'Is Team'].map(h => (
+                  {['#', 'Name', 'Email', 'Location', 'Company', 'Zillow URL', 'Match', 'Rating', 'Sales (12M)', 'Team', 'Is Team', ...(isStage2 ? ['Team Size', 'Confidence'] : [])].map(h => (
                     <th
                       key={h}
                       className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
@@ -395,7 +395,7 @@ export default function Home() {
                 {rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={isStage2 ? 12 : 11}
+                      colSpan={isStage2 ? 13 : 11}
                       className="px-4 py-8 text-center text-gray-400 text-sm"
                     >
                       Waiting for rows…
@@ -455,21 +455,26 @@ export default function Home() {
                           {completed ? (profile['is_team'] ? 'Yes' : 'No') : '—'}
                         </td>
                         {isStage2 && (
-                          <td className="px-4 py-2.5">
-                            {row.stage2_completed_at ? (
-                              <span style={{ padding: '2px 8px', fontSize: 12, borderRadius: 9999, background: '#dcfce7', color: '#15803d' }}>
-                                done
-                              </span>
-                            ) : row.zillow_url ? (
-                              <span style={{ padding: '2px 8px', fontSize: 12, borderRadius: 9999, background: '#f3f4f6', color: '#9ca3af' }}>
-                                pending
-                              </span>
-                            ) : (
-                              <span style={{ padding: '2px 8px', fontSize: 12, borderRadius: 9999, background: '#f3f4f6', color: '#d1d5db' }}>
-                                —
-                              </span>
-                            )}
-                          </td>
+                          <>
+                            <td className="px-4 py-2.5 text-gray-500 tabular-nums">
+                              {row.stage2_team_size != null ? row.stage2_team_size : '—'}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              {row.stage2_team_size_confidence ? (
+                                <span style={{
+                                  padding: '2px 8px', fontSize: 12, borderRadius: 9999,
+                                  background: row.stage2_team_size_confidence === 'high'   ? '#dcfce7'
+                                            : row.stage2_team_size_confidence === 'medium' ? '#fef9c3'
+                                            : '#fee2e2',
+                                  color:      row.stage2_team_size_confidence === 'high'   ? '#22c55e'
+                                            : row.stage2_team_size_confidence === 'medium' ? '#eab308'
+                                            : '#ef4444',
+                                }}>
+                                  {row.stage2_team_size_confidence}
+                                </span>
+                              ) : '—'}
+                            </td>
+                          </>
                         )}
                       </tr>
                     )
