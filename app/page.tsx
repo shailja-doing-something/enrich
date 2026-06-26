@@ -83,7 +83,10 @@ export default function Home() {
   function startPolling(id: string) {
     async function tick() {
       try {
-        const res  = await fetch(`/api/enrich/status/${id}?t=${Date.now()}`)
+        const res  = await fetch(`/api/enrich/status/${id}?t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' },
+        })
         const json = await res.json()
         if (!json.data) return
         setJob({ ...json.data.job })
@@ -278,9 +281,25 @@ export default function Home() {
         {/* progress card */}
         <div className="bg-white rounded-xl border border-gray-200 p-5 mb-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-700">
-              {isStage2 ? 'Stage 2 progress' : 'Stage 1 progress'}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="text-sm font-medium text-gray-700">
+                {isStage2 ? 'Stage 2 progress' : 'Stage 1 progress'}
+              </span>
+              <button
+                onClick={async () => {
+                  if (!jobId) return
+                  const res  = await fetch(`/api/enrich/status/${jobId}?t=${Date.now()}`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } })
+                  const json = await res.json()
+                  if (json?.data?.job) {
+                    setJob({ ...json.data.job })
+                    setRows([...json.data.rows])
+                  }
+                }}
+                style={{ padding: '2px 10px', fontSize: 12, background: 'none', border: '1px solid #d1d5db', borderRadius: 6, cursor: 'pointer', color: '#6b7280' }}
+              >
+                ↻ Refresh
+              </button>
+            </div>
             <span className="text-sm text-gray-500">
               {isStage2
                 ? `${job?.stage2_enriched ?? 0} / ${matchedCount} enriched`
