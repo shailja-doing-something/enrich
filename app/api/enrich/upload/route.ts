@@ -63,8 +63,10 @@ export async function POST(request: NextRequest) {
   const protocol = host.startsWith('localhost') ? 'http' : 'https'
   const baseUrl  = `${protocol}://${host}`
 
-  fetch(`${baseUrl}/api/enrich/run/${jobId}`, { method: 'POST' })
-    .catch(err => console.error('[upload] failed to trigger run route:', err))
+  fetch(`${baseUrl}/api/enrich/run/${jobId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  }).catch(err => console.error('[upload] trigger failed', err))
 
   return Response.json({ data: { job_id: jobId } })
 }
