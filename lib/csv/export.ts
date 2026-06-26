@@ -45,36 +45,6 @@ export function buildStage1CSV(rows: EnrichRow[]): string {
   return Papa.unparse(data)
 }
 
-export function buildStage2CSV(rows: EnrichRow[]): string {
-  const extraKeys = collectKeys(rows, 'extra_fields')
-
-  const data = rows.map(row => {
-    const record: Record<string, string> = {
-      Name:     row.name     ?? '',
-      Email:    row.email    ?? '',
-      Phone:    row.phone    ?? '',
-      Location: row.location ?? '',
-      Website:  row.website  ?? '',
-      Company:  row.company  ?? '',
-    }
-    for (const key of extraKeys) {
-      record[key] = stringify(row.extra_fields[key])
-    }
-    record['Zillow URL']  = row.zillow_url  ?? ''
-    record['Match Type']  = row.match_type  ?? ''
-
-    const profile = row.zillow_profile as Record<string, unknown>
-    for (const col of ZILLOW_COLS) {
-      record[`zillow_${col}`] = stringify(profile?.[col])
-    }
-
-    record['Team Size']            = row.stage2_team_size            != null ? String(row.stage2_team_size) : ''
-    record['Team Size Confidence'] = row.stage2_team_size_confidence ?? ''
-    return record
-  })
-
-  return Papa.unparse(data)
-}
 
 function collectKeys(rows: EnrichRow[], field: 'extra_fields' | 'zillow_profile'): string[] {
   const keys = new Set<string>()

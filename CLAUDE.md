@@ -1,6 +1,6 @@
 # Enrich
 
-Internal GTM tool for Fello.ai. A user uploads a CSV of real estate contacts; the tool looks up each contact in the Zillow agent profiles database (Stage 1), then enriches matched rows with full agent detail (Stage 2, stub). No LLM, no HubSpot integration, no column mapping — the CSV schema is fixed.
+Internal GTM tool for Fello.ai. A user uploads a CSV of real estate contacts; the tool looks up each contact in the Zillow agent profiles database and returns the matched Zillow profile URL + scraped profile data. No LLM, no HubSpot integration, no column mapping — the CSV schema is fixed. Single-stage pipeline (Stage 1 only).
 
 ## Tech Stack
 - **Framework**: Next.js 14 App Router, TypeScript (strict)
@@ -17,9 +17,8 @@ enrich/
 │   ├── api/enrich/
 │   │   ├── upload/route.ts          # POST — CSV upload, creates job, fires Stage 1
 │   │   ├── status/[jobId]/route.ts  # GET  — job + rows polling endpoint
-│   │   ├── stage2/[jobId]/route.ts  # POST — triggers Stage 2 (stub)
-│   │   └── export/[jobId]/route.ts  # GET  — CSV download (?stage=1 or ?stage=2)
-│   ├── page.tsx                     # Single-page dashboard (upload → stage1 → stage2)
+│   │   └── export/[jobId]/route.ts  # GET  — CSV download
+│   ├── page.tsx                     # Single-page dashboard (upload → results)
 │   └── globals.css
 ├── lib/
 │   ├── env.ts                       # Lazy env var getters
@@ -29,10 +28,9 @@ enrich/
 │   │   └── types.ts                 # EnrichJob, EnrichRow TypeScript types
 │   ├── csv/
 │   │   ├── parse.ts                 # parseCSV — CSV text → ParsedRow[]
-│   │   └── export.ts                # buildStage1CSV, buildStage2CSV
+│   │   └── export.ts                # buildStage1CSV
 │   └── pipeline/
-│       ├── stage1.ts                # runStage1 — Zillow lookup per row
-│       └── stage2.ts                # runStage2 — agent detail stub
+│       └── stage1.ts                # runStage1 — Zillow lookup per row
 ├── supabase/
 │   └── migrations/
 │       └── 001_enrich_overhaul.sql  # Apply in Supabase dashboard
@@ -50,7 +48,7 @@ Input columns (case-insensitive, whitespace-trimmed):
 | Location | `location`       |
 | Website  | `website`        |
 
-Any other column is preserved verbatim in `extra_fields` (JSONB) and carried through to both CSV exports. Rows with no Name AND no Email are dropped.
+Any other column is preserved verbatim in `extra_fields` (JSONB) and carried through to the CSV export. Rows with no Name AND no Email are dropped.
 
 ## Two Supabase Projects
 
@@ -61,18 +59,21 @@ Any other column is preserved verbatim in `extra_fields` (JSONB) and carried thr
 
 Both clients are lazy-initialized via `Proxy` — safe for `next build` even without env vars.
 
-## Stage 1 Lookup Priority (per row)
-Tries in this order, returns on first hit:
+## Lookup Priority (per row)
+Tries in this order via `lookupZillowProfile()` in `lib/pipeline/stage1.ts`, returns on first hit:
 
-1. **Email** — `.ilike('email', row.email)` on `zillow_agent_profiles` — `match_type: 'email'`
-2. **Phone** — strips non-digits, takes last 10 digits, `.eq('phone_cell', normalized)` — `match_type: 'phone'`
-3. **Name + state fuzzy** — requires `row.location` to end with `, XX` (2-letter state); `.ilike('full_name', '%name%').eq('address_state', state)` — `match_type: 'name_fuzzy'`
-4. **No match** — `match_type: 'no_match'`, `zillow_url: null`
+1. **email_company** — email + company domain match via `find_zillow_by_email_company` RPC
+2. **email** — email-only match via `find_zillow_by_email` RPC
+3. **name_team** — name match against `team_name` via `find_zillow_by_name_team` RPC
+4. **website** — website URL match via `find_zillow_by_website` RPC (normalises protocol/www/trailing slash)
+5. **phone_name** — phone + name fuzzy match via `find_zillow_by_phone_name` RPC (checks all 3 phone columns)
+6. **name_company_state** — name + company + state match via `find_zillow_by_name_company_state` RPC
+7. **name_fuzzy** — name + state fuzzy match via `find_zillow_by_name_fuzzy` RPC
+8. **no_match** — `match_type: 'no_match'`, `zillow_url: null`
+
+All RPCs are `SECURITY DEFINER` in `public` schema, accessing `staging.zillow_agent_profiles`. Returns `to_jsonb(z.*)` so full profile is stored in `enrich_rows.zillow_profile`.
 
 Stage 1 processes rows in batches of 10 (`Promise.all`). On completion it counts matched rows and updates `enrich_jobs.stage1_matched`.
-
-## Stage 2 (stub)
-Stage 2 is a placeholder. It marks every `zillow_url IS NOT NULL` row as processed (`stage2_completed_at = now()`) and logs "Stage 2 table TBD". Replace `enrichRow()` in `lib/pipeline/stage2.ts` when the agent detail table is available.
 
 ## Pipeline Architecture
 ```
@@ -80,16 +81,15 @@ POST /api/enrich/upload
   ├── parseCSV(text)          → ParsedRow[]
   ├── INSERT enrich_jobs      → job_id
   ├── INSERT enrich_rows      → one row per ParsedRow
-  └── runStage1(jobId) [fire-and-forget]
-        └── lookupZillowProfile(row) × N (batches of 10)
-              Writes: zillow_url, match_type, stage1_completed_at
+  └── fires /api/enrich/run/[jobId] [fire-and-forget]
+        └── runStage1(jobId)
+              └── lookupZillowProfile(row) × N (batches of 10)
+                    Writes: zillow_url, match_type, zillow_profile, stage1_completed_at
 
 GET /api/enrich/status/[jobId]   → { job: EnrichJob, rows: EnrichRow[] }
   (polled every 2s by UI)
 
-POST /api/enrich/stage2/[jobId]  → fires runStage2 [fire-and-forget]
-
-GET /api/enrich/export/[jobId]?stage=1|2  → CSV download
+GET /api/enrich/export/[jobId]   → CSV download (Stage 1 results)
 ```
 
 ## Key Commands
