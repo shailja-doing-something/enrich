@@ -105,10 +105,11 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
   const email     = (row.email   ?? '').trim()
   const company   = (row.company ?? '').trim()
   const rawPhone  = (row.phone   ?? '').replace(/\D/g, '').slice(-10)
+  const website   = (row.website ?? '').trim()
   const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
   const stateCode  = stateMatch?.[1] ?? ''
 
-  console.log(`[lookup] row=${row.id} email=${email} name=${name} company=${company} phone=${rawPhone} state=${stateCode}`)
+  console.log(`[lookup] row=${row.id} email=${email} name=${name} company=${company} phone=${rawPhone} website=${website} state=${stateCode}`)
 
   async function rpc(rpcName: string, params: Record<string, unknown>): Promise<ProfileRow | null> {
     try {
@@ -122,8 +123,8 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
   if (email && company) {
     const data = await rpc('find_zillow_by_email_company', { p_email: email, p_company: company })
     if (data?.profile_link) return {
-      zillow_url:    data.profile_link,
-      match_type:    'email_company',
+      zillow_url:     data.profile_link,
+      match_type:     'email_company',
       zillow_profile: data,
     }
   }
@@ -132,8 +133,8 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
   if (email) {
     const data = await rpc('find_zillow_by_email', { p_email: email })
     if (data?.profile_link) return {
-      zillow_url:    data.profile_link,
-      match_type:    'email',
+      zillow_url:     data.profile_link,
+      match_type:     'email',
       zillow_profile: data,
     }
   }
@@ -142,42 +143,52 @@ async function lookupZillowProfile(row: EnrichRow): Promise<LookupResult> {
   if (name && company) {
     const data = await rpc('find_zillow_by_name_team', { p_name: name, p_company: company })
     if (data?.profile_link) return {
-      zillow_url:    data.profile_link,
-      match_type:    'name_team',
+      zillow_url:     data.profile_link,
+      match_type:     'name_team',
       zillow_profile: data,
     }
   }
 
-  // Step 4: Phone + Email
-  if (rawPhone.length === 10 && email) {
-    const data = await rpc('find_zillow_by_phone_email', { p_phone: rawPhone, p_email: email })
+  // Step 4: Website match
+  if (website) {
+    const data = await rpc('find_zillow_by_website', { p_website: website })
     if (data?.profile_link) return {
-      zillow_url:    data.profile_link,
-      match_type:    'phone_email',
+      zillow_url:     data.profile_link,
+      match_type:     'website',
       zillow_profile: data,
     }
   }
 
-  // Step 5: Name fuzzy + Company fuzzy + State
+  // Step 5: Phone + Name fuzzy
+  if (rawPhone.length === 10 && name) {
+    const data = await rpc('find_zillow_by_phone_name', { p_phone: rawPhone, p_name: name })
+    if (data?.profile_link) return {
+      zillow_url:     data.profile_link,
+      match_type:     'phone_name',
+      zillow_profile: data,
+    }
+  }
+
+  // Step 6: Name fuzzy + Company fuzzy + State
   if (name && company && stateCode) {
     const data = await rpc('find_zillow_by_name_company_state', { p_name: name, p_company: company, p_state: stateCode })
     if (data?.profile_link) return {
-      zillow_url:    data.profile_link,
-      match_type:    'name_company_state',
+      zillow_url:     data.profile_link,
+      match_type:     'name_company_state',
       zillow_profile: data,
     }
   }
 
-  // Step 6: Name fuzzy + State
+  // Step 7: Name fuzzy + State
   if (name) {
     const data = await rpc('find_zillow_by_name_state', { p_name: name, p_state: stateCode })
     if (data?.profile_link) return {
-      zillow_url:    data.profile_link,
-      match_type:    'name_fuzzy',
+      zillow_url:     data.profile_link,
+      match_type:     'name_fuzzy',
       zillow_profile: data,
     }
   }
 
-  // Step 7: No match
+  // Step 8: No match
   return { zillow_url: null, match_type: 'no_match', zillow_profile: {} }
 }

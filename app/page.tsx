@@ -34,12 +34,13 @@ function MatchBadge({ type }: { type: string | null }) {
     )
   }
   const colors: Record<string, { bg: string; color: string }> = {
-    email_company:      { bg: '#dcfce7', color: '#16a34a' },
-    email:              { bg: '#d1fae5', color: '#15803d' },
+    email_company:      { bg: '#dcfce7', color: '#15803d' },
+    email:              { bg: '#bbf7d0', color: '#22c55e' },
     name_team:          { bg: '#f3e8ff', color: '#a855f7' },
-    phone_email:        { bg: '#dbeafe', color: '#3b82f6' },
+    website:            { bg: '#e0f2fe', color: '#0ea5e9' },
+    phone_name:         { bg: '#dbeafe', color: '#3b82f6' },
     name_company_state: { bg: '#ffedd5', color: '#f97316' },
-    name_fuzzy:         { bg: '#fef9c3', color: '#a16207' },
+    name_fuzzy:         { bg: '#fef9c3', color: '#eab308' },
     no_match:           { bg: '#fee2e2', color: '#ef4444' },
   }
   const c = colors[type] ?? { bg: '#f3f4f6', color: '#6b7280' }
