@@ -1,5 +1,14 @@
 # Release Notes
 
+## [0.9.19] — 2026-06-29 — Fix upload click-bubble loop + MAD match priority order
+
+### Fixed
+- `app/page.tsx` — added `onClick={e => e.stopPropagation()}` to hidden file `<input>` inside `UploadZone`; programmatic `.click()` on the input dispatched a synthetic click event that bubbled up to the parent div's `onClick`, re-triggering `.click()` in a loop; `stopPropagation` breaks the cycle
+- `lib/pipeline/mad.ts` — updated `lookupMadAgent` to 5-step priority: email → phone → name+state exact (`find_mad_agent_by_name_state_exact`) → name+state fuzzy (`find_mad_agent_by_name_state`) → no_match; previously step 3 called `find_mad_agent_by_name` (no state filter); `splitName` moved to top of function and shared by steps 3 and 4 (was called twice redundantly)
+
+### DB changes
+- New RPC `find_mad_agent_by_name_state_exact(p_first_name, p_last_name, p_state)` must be created in Supabase dashboard — exact match on first+last name with optional state filter; required for MAD step 3
+
 ## [0.9.18] — 2026-06-29 — MAD lookup branch: team name/website/domain from mad.agents
 
 ### Added
