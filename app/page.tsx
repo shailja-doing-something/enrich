@@ -106,6 +106,7 @@ function UploadZone({
         accept=".csv,text/csv"
         className="hidden"
         onChange={onChange}
+        onClick={e => e.stopPropagation()}
         disabled={uploading}
       />
       {uploading ? (

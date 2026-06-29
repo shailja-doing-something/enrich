@@ -33,6 +33,7 @@ async function lookupMadAgent(row: MadEnrichRow): Promise<{
   const name = (row.name ?? '').trim()
   const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
   const stateCode = stateMatch?.[1] ?? ''
+  const { first, last } = splitName(name)
 
   // Step 1: Email
   if (email) {
@@ -48,26 +49,20 @@ async function lookupMadAgent(row: MadEnrichRow): Promise<{
     if (data?.agent_id) return { match_type: 'phone', mad_profile: data }
   }
 
-  // Step 3: Name exact
-  if (name) {
-    const { first, last } = splitName(name)
-    if (first && last) {
-      const data = await rpc<Record<string, unknown>>(
-        'find_mad_agent_by_name',
-        { p_first_name: first, p_last_name: last })
-      if (data?.agent_id) return { match_type: 'name_exact', mad_profile: data }
-    }
+  // Step 3: Name exact + state
+  if (first && last) {
+    const data = await rpc<Record<string, unknown>>(
+      'find_mad_agent_by_name_state_exact',
+      { p_first_name: first, p_last_name: last, p_state: stateCode })
+    if (data?.agent_id) return { match_type: 'name_exact', mad_profile: data }
   }
 
   // Step 4: Name fuzzy + state
-  if (name) {
-    const { first, last } = splitName(name)
-    if (first && last) {
-      const data = await rpc<Record<string, unknown>>(
-        'find_mad_agent_by_name_state',
-        { p_first_name: first, p_last_name: last, p_state: stateCode })
-      if (data?.agent_id) return { match_type: 'name_fuzzy', mad_profile: data }
-    }
+  if (first && last) {
+    const data = await rpc<Record<string, unknown>>(
+      'find_mad_agent_by_name_state',
+      { p_first_name: first, p_last_name: last, p_state: stateCode })
+    if (data?.agent_id) return { match_type: 'name_fuzzy', mad_profile: data }
   }
 
   return { match_type: 'no_match', mad_profile: {} }
