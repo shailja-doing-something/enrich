@@ -1,3 +1,30 @@
+export type MadEnrichJob = {
+  id: string
+  filename: string
+  total_rows: number
+  status: 'pending' | 'running' | 'done' | 'error'
+  matched: number
+  completed_at: string | null
+  created_at: string
+}
+
+export type MadEnrichRow = {
+  id: string
+  job_id: string
+  row_index: number
+  name: string | null
+  email: string | null
+  phone: string | null
+  location: string | null
+  website: string | null
+  company: string | null
+  extra_fields: Record<string, unknown>
+  match_type: 'email' | 'phone' | 'name_exact' | 'name_fuzzy' | 'no_match' | null
+  mad_profile: Record<string, unknown>
+  completed_at: string | null
+  created_at: string
+}
+
 export type EnrichJob = {
   id: string
   filename: string

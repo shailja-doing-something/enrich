@@ -1,5 +1,22 @@
 # Release Notes
 
+## [0.9.18] — 2026-06-29 — MAD lookup branch: team name/website/domain from mad.agents
+
+### Added
+- `supabase/migrations/002_mad_lookup.sql` — creates `mad_enrich_jobs` and `mad_enrich_rows` tables; mirrors the `enrich_jobs`/`enrich_rows` schema with MAD-specific columns (`matched`, `mad_profile`, `match_type` values: email/phone/name_exact/name_fuzzy/no_match)
+- `lib/supabase/types.ts` — `MadEnrichJob` and `MadEnrichRow` types
+- `lib/pipeline/mad.ts` — `runMadLookup(jobId)`: 4-step lookup per row (email → phone → name_exact → name_fuzzy+state) via `find_mad_agent_by_*` RPCs; processes rows in batches of 10 with live progress updates; mirrors the stage1 fire-and-forget + batch pattern
+- `app/api/mad/upload/route.ts` — POST: multipart CSV upload; inserts `mad_enrich_jobs` + `mad_enrich_rows`; fires `/api/mad/run/[jobId]` fire-and-forget
+- `app/api/mad/run/[jobId]/route.ts` — POST: `maxDuration=0`, awaits `runMadLookup`; same pattern as `enrich/run`
+- `app/api/mad/status/[jobId]/route.ts` — GET: returns `{ job, rows }` from `mad_enrich_jobs`/`mad_enrich_rows`; `no-store` cache headers
+- `app/api/mad/export/[jobId]/route.ts` — GET: CSV with fixed columns + extra_fields spread + 13 MAD profile columns (team_name, team_city, team_state, team_website, team_zillow_url, brokerage_name, brokerage_type, brokerage_website, job_title, company_domain, transactions_last_12m, agent email, agent phone)
+
+### Changed
+- `app/page.tsx` — Stage A now shows two upload cards side by side (Zillow + MAD); `branch` state (`'zillow' | 'mad'`) routes upload and polling to the correct pipeline; Stage B renders either Zillow results table or MAD results table depending on active branch; MAD table columns: #, Name, Email, Location, Match Type, Team Name, Team Website, Team Zillow URL, Brokerage, Transactions (12m); MAD match badge colors distinct from Zillow badges
+
+### Schema changes (apply in Supabase dashboard)
+Run `supabase/migrations/002_mad_lookup.sql`
+
 ## [0.9.17] — 2026-06-26 — Fix stage1 timeout + URL construction + progress bar
 
 ### Fixed
