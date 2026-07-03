@@ -23,6 +23,23 @@ const KNOWN_COLUMNS: Record<string, keyof Omit<ParsedRow, 'extra_fields'>> = {
   organization: 'company',
 }
 
+function extractFirstValidPhone(raw: string): string {
+  if (!raw) return ''
+
+  const parts = raw.split(/[,;|\n\/]+/).map(p => p.trim()).filter(Boolean)
+
+  for (const part of parts) {
+    const digits = part.replace(/\D/g, '')
+    const normalized = digits.slice(-10)
+    if (normalized.length === 10) {
+      return normalized
+    }
+  }
+
+  const fallback = raw.replace(/\D/g, '').slice(-10)
+  return fallback.length === 10 ? fallback : ''
+}
+
 export function parseCSV(text: string): ParsedRow[] {
   try {
     const result = Papa.parse<Record<string, string>>(text, {
@@ -44,10 +61,18 @@ export function parseCSV(text: string): ParsedRow[] {
           }
         }
 
+        const rawPhone = known.phone ?? ''
+        const phone = extractFirstValidPhone(rawPhone)
+
+        // Preserve original when it contained multiple numbers or didn't parse cleanly
+        if (rawPhone && (rawPhone !== phone)) {
+          extra_fields['phone_raw'] = rawPhone
+        }
+
         return {
           name:     known.name     ?? '',
           email:    known.email    ?? '',
-          phone:    known.phone    ?? '',
+          phone,
           location: known.location ?? '',
           website:  known.website  ?? '',
           company:  known.company  ?? '',
