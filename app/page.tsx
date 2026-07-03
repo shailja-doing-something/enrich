@@ -2,10 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react'
 import type { DragEvent, ChangeEvent } from 'react'
+import Papa from 'papaparse'
 import type { EnrichRow, MadEnrichRow } from '@/lib/supabase/types'
 
-type Stage = 'A' | 'B'
+type Stage  = 'A' | 'A2' | 'B'
 type Branch = 'zillow' | 'mad'
+
+const ALL_STANDARD_COLS = ['Name', 'Email', 'Phone', 'Location', 'Company', 'Website'] as const
+const MAD_ALLOWED_COLS  = new Set(['Name', 'Email', 'Phone', 'Location'])
 
 // ── sub-components ─────────────────────────────────────────────────────────
 
@@ -112,7 +116,7 @@ function UploadZone({
       {uploading ? (
         <>
           <div className="h-8 w-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
-          <p className="text-sm text-gray-500">Uploading…</p>
+          <p className="text-sm text-gray-500">Reading…</p>
         </>
       ) : (
         <>
@@ -134,17 +138,22 @@ export default function Home() {
   const [stage, setStage]   = useState<Stage>('A')
   const [branch, setBranch] = useState<Branch>('zillow')
   const branchRef           = useRef<Branch>('zillow')
-  branchRef.current = branch  // keep in sync on every render — reads are never stale
+  branchRef.current = branch
 
   const [jobId, setJobId] = useState<string | null>(null)
-  // Single job/rows state serves both branches; access fields via branchRef
   const [job, setJob]     = useState<Record<string, unknown> | null>(null)
   const [rows, setRows]   = useState<Record<string, unknown>[]>([])
 
-  const [uploading, setUploading]         = useState(false)
-  const [error, setError]                 = useState<string | null>(null)
-  const [draggingZillow, setDraggingZillow] = useState(false)
-  const [draggingMad, setDraggingMad]       = useState(false)
+  // A2 state
+  const [matchConfig, setMatchConfig]         = useState<string[][]>([])
+  const [detectedColumns, setDetectedColumns] = useState<string[]>([])
+  const [pendingFile, setPendingFile]         = useState<File | null>(null)
+  const [currentStepCols, setCurrentStepCols] = useState<string[]>([])
+
+  const [uploading, setUploading]             = useState(false)
+  const [error, setError]                     = useState<string | null>(null)
+  const [draggingZillow, setDraggingZillow]   = useState(false)
+  const [draggingMad, setDraggingMad]         = useState(false)
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -182,8 +191,6 @@ export default function Home() {
         setJob(j)
         setRows((json.data.rows ?? []) as Record<string, unknown>[])
 
-        // Stop condition works for both schemas:
-        // Zillow jobs have stage1_status; MAD jobs have status
         const isDone =
           j.stage1_status === 'done'  ||
           j.stage1_status === 'error' ||
@@ -203,22 +210,55 @@ export default function Home() {
     tick()
   }
 
-  // ── upload ────────────────────────────────────────────────────────────────
+  // ── file preparation (A → A2) ─────────────────────────────────────────────
 
-  async function handleFile(file: File) {
+  async function prepareFile(file: File) {
+    setError(null)
+    try {
+      const text = await file.text()
+      const result = Papa.parse(text, { header: true, preview: 1 })
+      const headers = (result.meta.fields ?? []) as string[]
+
+      const found = ALL_STANDARD_COLS.filter(col =>
+        headers.some(h => h.trim().toLowerCase() === col.toLowerCase())
+      )
+      setDetectedColumns(found)
+      setPendingFile(file)
+      setMatchConfig([])
+      setCurrentStepCols([])
+      setStage('A2')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to read file')
+    }
+  }
+
+  function handleZillowUpload(file: File) {
+    setBranch('zillow')
+    branchRef.current = 'zillow'
+    prepareFile(file)
+  }
+
+  function handleMadUpload(file: File) {
+    setBranch('mad')
+    branchRef.current = 'mad'
+    prepareFile(file)
+  }
+
+  // ── upload + start pipeline (A2 → B) ─────────────────────────────────────
+
+  async function handleRunMatching() {
+    if (!pendingFile) return
     setUploading(true)
     setError(null)
     stopPolling()
     try {
       const fd = new FormData()
-      fd.append('file', file)
+      fd.append('file', pendingFile)
+      fd.append('match_config', JSON.stringify(matchConfig))
 
-      // branchRef.current is synchronously set by the caller before this runs
       const endpoint = branchRef.current === 'mad'
         ? '/api/mad/upload'
         : '/api/enrich/upload'
-
-      console.log('[upload] branch=', branchRef.current, 'endpoint=', endpoint)
 
       const res  = await fetch(endpoint, { method: 'POST', body: fd })
       const json = (await res.json()) as { data?: { job_id: string }; error?: string }
@@ -234,7 +274,6 @@ export default function Home() {
         ? '/api/mad/status'
         : '/api/enrich/status'
       startPolling(id, statusBase)
-
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Upload failed')
     } finally {
@@ -242,41 +281,20 @@ export default function Home() {
     }
   }
 
-  // Set branch synchronously on ref before calling unified handleFile
-  function handleZillowUpload(file: File) {
-    setBranch('zillow')
-    branchRef.current = 'zillow'
-    handleFile(file)
-  }
-
-  function handleMadUpload(file: File) {
-    setBranch('mad')
-    branchRef.current = 'mad'
-    handleFile(file)
-  }
-
-  // ── derived state — works for both job schemas ────────────────────────────
+  // ── derived state ─────────────────────────────────────────────────────────
 
   const totalRows    = (job?.total_rows as number | undefined) ?? 0
   const matchedCount = branchRef.current === 'mad'
     ? ((job?.matched as number | undefined) ?? 0)
     : ((job?.stage1_matched as number | undefined) ?? 0)
-  const pct          = totalRows > 0
-    ? Math.min(100, Math.round((matchedCount / totalRows) * 100))
-    : 0
-  const isDone    = branchRef.current === 'mad'
-    ? job?.status === 'done'
-    : job?.stage1_status === 'done'
-  const isRunning = branchRef.current === 'mad'
-    ? job?.status === 'running'
-    : job?.stage1_status === 'running'
-  const isError   = branchRef.current === 'mad'
-    ? job?.status === 'error'
-    : job?.stage1_status === 'error'
+  const pct       = totalRows > 0 ? Math.min(100, Math.round((matchedCount / totalRows) * 100)) : 0
+  const isDone    = branchRef.current === 'mad' ? job?.status === 'done'    : job?.stage1_status === 'done'
+  const isRunning = branchRef.current === 'mad' ? job?.status === 'running' : job?.stage1_status === 'running'
+  const isError   = branchRef.current === 'mad' ? job?.status === 'error'   : job?.stage1_status === 'error'
   const filename  = (job?.filename as string | undefined) ?? '—'
   const heading   = branch === 'mad' ? 'Finding MAD Team Details' : 'Finding Zillow URLs'
 
-  // ── reset — branch intentionally preserved ───────────────────────────────
+  // ── reset ─────────────────────────────────────────────────────────────────
 
   function resetToUpload() {
     stopPolling()
@@ -285,6 +303,10 @@ export default function Home() {
     setRows([])
     setStage('A')
     setError(null)
+    setPendingFile(null)
+    setMatchConfig([])
+    setDetectedColumns([])
+    setCurrentStepCols([])
   }
 
   // ── Stage A — two-card upload screen ─────────────────────────────────────
@@ -310,7 +332,7 @@ export default function Home() {
                 </div>
               </div>
               <UploadZone
-                uploading={uploading}
+                uploading={false}
                 dragging={draggingZillow}
                 onDragOver={(e) => { e.preventDefault(); setDraggingZillow(true) }}
                 onDragLeave={() => setDraggingZillow(false)}
@@ -341,7 +363,7 @@ export default function Home() {
                 </div>
               </div>
               <UploadZone
-                uploading={uploading}
+                uploading={false}
                 dragging={draggingMad}
                 onDragOver={(e) => { e.preventDefault(); setDraggingMad(true) }}
                 onDragLeave={() => setDraggingMad(false)}
@@ -364,6 +386,176 @@ export default function Home() {
           </div>
 
           {error && <ErrorBanner message={error} />}
+        </div>
+      </main>
+    )
+  }
+
+  // ── Stage A2 — match configuration ───────────────────────────────────────
+
+  if (stage === 'A2') {
+    const isMad         = branchRef.current === 'mad'
+    const availableCols = ALL_STANDARD_COLS.filter(col => detectedColumns.includes(col))
+
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+        <div className="w-full max-w-lg">
+          <h1 className="text-xl font-semibold text-gray-800 mb-1">Configure match steps</h1>
+          <p className="text-sm text-gray-500 mb-6">
+            Add steps in priority order. Each step combines one or more columns.
+          </p>
+
+          {/* Column buttons */}
+          <div className="mb-4">
+            <p style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+              Available columns
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {availableCols.map(col => {
+                const disabled = isMad && !MAD_ALLOWED_COLS.has(col)
+                const selected = currentStepCols.includes(col)
+                return (
+                  <button
+                    key={col}
+                    disabled={disabled}
+                    title={disabled ? 'Not available for MAD lookup' : undefined}
+                    onClick={() => {
+                      if (disabled) return
+                      setCurrentStepCols(prev =>
+                        prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
+                      )
+                    }}
+                    style={{
+                      padding: '5px 14px',
+                      borderRadius: 9999,
+                      fontSize: 13,
+                      fontWeight: 500,
+                      border: '1px solid',
+                      borderColor: disabled ? '#e5e7eb' : selected ? '#3b82f6' : '#d1d5db',
+                      background:  disabled ? '#f9fafb' : selected ? '#eff6ff' : 'white',
+                      color:       disabled ? '#d1d5db' : selected ? '#2563eb' : '#374151',
+                      cursor: disabled ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.1s',
+                    }}
+                  >
+                    {col}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Add Step */}
+          <button
+            disabled={currentStepCols.length === 0}
+            onClick={() => {
+              if (currentStepCols.length === 0) return
+              setMatchConfig(prev => [...prev, [...currentStepCols]])
+              setCurrentStepCols([])
+            }}
+            style={{
+              marginBottom: 24,
+              padding: '7px 18px',
+              fontSize: 13,
+              fontWeight: 500,
+              borderRadius: 8,
+              background: currentStepCols.length === 0 ? '#e5e7eb' : '#2563eb',
+              color: currentStepCols.length === 0 ? '#9ca3af' : 'white',
+              border: 'none',
+              cursor: currentStepCols.length === 0 ? 'not-allowed' : 'pointer',
+              transition: 'background 0.1s',
+            }}
+          >
+            + Add Step
+          </button>
+
+          {/* Steps list */}
+          {matchConfig.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                Steps (in order)
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {matchConfig.map((step, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px' }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: '#9ca3af', minWidth: 52 }}>
+                      Step {i + 1}
+                    </span>
+                    <span style={{ flex: 1, fontSize: 13, color: '#374151' }}>
+                      {step.join(' + ')}
+                    </span>
+                    <button
+                      disabled={i === 0}
+                      onClick={() => setMatchConfig(prev => {
+                        const a = [...prev]
+                        ;[a[i - 1], a[i]] = [a[i], a[i - 1]]
+                        return a
+                      })}
+                      style={{ color: i === 0 ? '#d1d5db' : '#6b7280', background: 'none', border: 'none', cursor: i === 0 ? 'not-allowed' : 'pointer', fontSize: 14, padding: '0 2px' }}
+                    >↑</button>
+                    <button
+                      disabled={i === matchConfig.length - 1}
+                      onClick={() => setMatchConfig(prev => {
+                        const a = [...prev]
+                        ;[a[i], a[i + 1]] = [a[i + 1], a[i]]
+                        return a
+                      })}
+                      style={{ color: i === matchConfig.length - 1 ? '#d1d5db' : '#6b7280', background: 'none', border: 'none', cursor: i === matchConfig.length - 1 ? 'not-allowed' : 'pointer', fontSize: 14, padding: '0 2px' }}
+                    >↓</button>
+                    <button
+                      onClick={() => setMatchConfig(prev => prev.filter((_, j) => j !== i))}
+                      style={{ color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, padding: '0 2px' }}
+                    >Remove</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {error && <ErrorBanner message={error} />}
+
+          {/* Action buttons */}
+          <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+            <button
+              onClick={() => {
+                setPendingFile(null)
+                setDetectedColumns([])
+                setMatchConfig([])
+                setCurrentStepCols([])
+                setError(null)
+                setStage('A')
+              }}
+              style={{ padding: '9px 18px', fontSize: 13, fontWeight: 500, borderRadius: 8, border: '1px solid #d1d5db', background: 'white', color: '#374151', cursor: 'pointer' }}
+            >
+              ← Back
+            </button>
+            <button
+              disabled={matchConfig.length === 0 || uploading}
+              onClick={handleRunMatching}
+              style={{
+                flex: 1,
+                padding: '9px 18px',
+                fontSize: 13,
+                fontWeight: 500,
+                borderRadius: 8,
+                border: 'none',
+                background: matchConfig.length === 0 || uploading ? '#e5e7eb' : '#2563eb',
+                color: matchConfig.length === 0 || uploading ? '#9ca3af' : 'white',
+                cursor: matchConfig.length === 0 || uploading ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+              }}
+            >
+              {uploading ? (
+                <>
+                  <div style={{ width: 14, height: 14, borderRadius: 9999, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', animation: 'spin 0.7s linear infinite' }} />
+                  Uploading…
+                </>
+              ) : 'Run Matching →'}
+            </button>
+          </div>
         </div>
       </main>
     )

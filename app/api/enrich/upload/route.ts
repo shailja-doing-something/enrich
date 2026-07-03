@@ -24,9 +24,12 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: validation.error.issues[0]?.message ?? 'Invalid CSV' }, { status: 400 })
   }
 
+  const configRaw = formData.get('match_config')
+  const matchConfig: string[][] = configRaw ? JSON.parse(configRaw as string) : []
+
   const { data: job, error: jobErr } = await supabaseAdmin
     .from('enrich_jobs')
-    .insert({ filename: file.name, total_rows: rows.length })
+    .insert({ filename: file.name, total_rows: rows.length, match_config: matchConfig })
     .select('id')
     .single()
 

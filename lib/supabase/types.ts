@@ -6,6 +6,7 @@ export type MadEnrichJob = {
   matched: number
   completed_at: string | null
   created_at: string
+  match_config: string[][]
 }
 
 export type MadEnrichRow = {
@@ -19,7 +20,7 @@ export type MadEnrichRow = {
   website: string | null
   company: string | null
   extra_fields: Record<string, unknown>
-  match_type: 'email' | 'phone' | 'name_exact' | 'name_fuzzy' | 'no_match' | null
+  match_type: string | null
   mad_profile: Record<string, unknown>
   completed_at: string | null
   created_at: string
@@ -33,6 +34,7 @@ export type EnrichJob = {
   stage1_matched: number
   stage1_completed_at: string | null
   created_at: string
+  match_config: string[][]
 }
 
 export type EnrichRow = {
@@ -47,7 +49,7 @@ export type EnrichRow = {
   company: string | null
   extra_fields: Record<string, unknown>
   zillow_url: string | null
-  match_type: 'email_company' | 'email' | 'name_team' | 'website' | 'phone_name' | 'name_company_state' | 'name_fuzzy' | 'no_match' | null
+  match_type: string | null
   zillow_profile: Record<string, unknown>
   stage1_completed_at: string | null
   created_at: string

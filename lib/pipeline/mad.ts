@@ -24,45 +24,58 @@ function splitName(fullName: string): { first: string; last: string } {
   return { first: parts[0], last: parts.slice(1).join(' ') }
 }
 
-async function lookupMadAgent(row: MadEnrichRow): Promise<{
+async function lookupMadAgent(
+  row: MadEnrichRow,
+  config: string[][]
+): Promise<{
   match_type: string
   mad_profile: Record<string, unknown>
 }> {
   const email = (row.email ?? '').trim()
   const phone = (row.phone ?? '').replace(/\D/g, '').slice(-10)
-  const name = (row.name ?? '').trim()
+  const name  = (row.name  ?? '').trim()
   const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
-  const stateCode = stateMatch?.[1] ?? ''
+  const stateCode  = stateMatch?.[1] ?? ''
   const { first, last } = splitName(name)
 
-  // Step 1: Email
-  if (email) {
-    const data = await rpc<Record<string, unknown>>(
-      'find_mad_agent_by_email', { p_email: email })
-    if (data?.agent_id) return { match_type: 'email', mad_profile: data }
-  }
+  for (const step of config) {
+    const cols = step.map(c => c.toLowerCase())
+    const hasEmail    = cols.includes('email')
+    const hasName     = cols.includes('name')
+    const hasPhone    = cols.includes('phone')
+    const hasLocation = cols.includes('location')
 
-  // Step 2: Phone
-  if (phone.length === 10) {
-    const data = await rpc<Record<string, unknown>>(
-      'find_mad_agent_by_phone', { p_phone: phone })
-    if (data?.agent_id) return { match_type: 'phone', mad_profile: data }
-  }
+    if (hasEmail    && !email)            continue
+    if (hasName     && (!first || !last)) continue
+    if (hasPhone    && phone.length !== 10) continue
+    if (hasLocation && !stateCode)        continue
 
-  // Step 3: Name exact + state
-  if (first && last) {
-    const data = await rpc<Record<string, unknown>>(
-      'find_mad_agent_by_name_state_exact',
-      { p_first_name: first, p_last_name: last, p_state: stateCode })
-    if (data?.agent_id) return { match_type: 'name_exact', mad_profile: data }
-  }
+    const key = [...cols].sort().join('+')
+    let data: Record<string, unknown> | null = null
 
-  // Step 4: Name fuzzy + state
-  if (first && last) {
-    const data = await rpc<Record<string, unknown>>(
-      'find_mad_agent_by_name_state',
-      { p_first_name: first, p_last_name: last, p_state: stateCode })
-    if (data?.agent_id) return { match_type: 'name_fuzzy', mad_profile: data }
+    if (key === 'email') {
+      data = await rpc<Record<string, unknown>>('find_mad_agent_by_email', { p_email: email })
+    } else if (key === 'phone') {
+      data = await rpc<Record<string, unknown>>('find_mad_agent_by_phone', { p_phone: phone })
+    } else if (key === 'location+name') {
+      data = await rpc<Record<string, unknown>>(
+        'find_mad_agent_by_name_state_exact',
+        { p_first_name: first, p_last_name: last, p_state: stateCode })
+    } else if (key === 'name') {
+      data = await rpc<Record<string, unknown>>(
+        'find_mad_agent_by_name_state_exact',
+        { p_first_name: first, p_last_name: last, p_state: '' })
+    } else {
+      console.warn('[mad] unknown step combo:', key)
+      continue
+    }
+
+    if (data?.agent_id) {
+      return {
+        match_type: key.replace(/\+/g, '_'),
+        mad_profile: data,
+      }
+    }
   }
 
   return { match_type: 'no_match', mad_profile: {} }
@@ -81,6 +94,14 @@ export async function runMadLookup(jobId: string): Promise<void> {
   }
 
   try {
+    const { data: jobData } = await supabaseAdmin
+      .from('mad_enrich_jobs')
+      .select('match_config')
+      .eq('id', jobId)
+      .single()
+    const config: string[][] = ((jobData as Record<string, unknown>)?.match_config as string[][] | null) ?? []
+    console.log(`[mad] steps=${config.length}`)
+
     const { data: rows, error: rowsErr } = await supabaseAdmin
       .from('mad_enrich_rows')
       .select('*')
@@ -104,7 +125,7 @@ export async function runMadLookup(jobId: string): Promise<void> {
       const batch = rows.slice(i, i + batchSize)
       await Promise.all(batch.map(async (row) => {
         try {
-          const { match_type, mad_profile } = await lookupMadAgent(row as MadEnrichRow)
+          const { match_type, mad_profile } = await lookupMadAgent(row as MadEnrichRow, config)
           if (match_type !== 'no_match') matchedCount++
           await supabaseAdmin
             .from('mad_enrich_rows')
