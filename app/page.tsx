@@ -24,7 +24,8 @@ function columnsToStrategyId(cols: string[], fuzzyMode: boolean, br: Branch): st
     if (key === 'company+email') return 'email_company'
     if (key === 'company+name') return 'name_company'
     if (key === 'website') return 'website'
-    if (key === 'name+phone') return 'phone_name_fuzzy'
+    if (key === 'email+name') return fuzzyMode ? 'name_fuzzy_email' : 'name_exact_email'
+    if (key === 'name+phone') return fuzzyMode ? 'name_fuzzy_phone' : 'name_exact_phone'
     if (key === 'company+location+name') return 'name_company_state'
     if (key === 'location+name') return fuzzyMode ? 'name_state_fuzzy' : 'name_state_exact'
     if (key === 'name') return fuzzyMode ? 'name_state_fuzzy' : 'name_state_exact'
@@ -51,6 +52,10 @@ function ZillowMatchBadge({ type }: { type: string | null }) {
   const colors: Record<string, { bg: string; color: string }> = {
     email_company:     { bg: '#dcfce7', color: '#15803d' },
     email:             { bg: '#bbf7d0', color: '#22c55e' },
+    name_exact_email:  { bg: '#d1fae5', color: '#065f46' },
+    name_fuzzy_email:  { bg: '#a7f3d0', color: '#047857' },
+    name_exact_phone:  { bg: '#e0f2fe', color: '#0369a1' },
+    name_fuzzy_phone:  { bg: '#bae6fd', color: '#0284c7' },
     name_company:      { bg: '#f3e8ff', color: '#a855f7' },
     website:           { bg: '#e0f2fe', color: '#0ea5e9' },
     phone_name_fuzzy:  { bg: '#dbeafe', color: '#3b82f6' },
@@ -179,7 +184,7 @@ export default function Home() {
   const [rows, setRows]   = useState<Record<string, unknown>[]>([])
 
   // A2 state
-  const [selectedSteps, setSelectedSteps]     = useState<string[]>([])
+  const [selectedSteps, setSelectedSteps]     = useState<{ id: string; label: string }[]>([])
   const [selectedCols, setSelectedCols]       = useState<string[]>([])
   const [fuzzy, setFuzzy]                     = useState(true)
   const [stepError, setStepError]             = useState('')
@@ -293,7 +298,7 @@ export default function Home() {
       const fd = new FormData()
       fd.append('file', pendingFile)
       const config = selectedSteps.length > 0
-        ? selectedSteps
+        ? selectedSteps.map(s => s.id)
         : branchRef.current === 'mad'
           ? DEFAULT_MAD_CONFIG
           : DEFAULT_ZILLOW_CONFIG
@@ -453,7 +458,8 @@ export default function Home() {
         setStepError("This column combination doesn't map to a known strategy. Try a different set.")
         return
       }
-      setSelectedSteps(prev => [...prev, id])
+      const label = strategies.find(s => s.id === id)?.label ?? id
+      setSelectedSteps(prev => [...prev, { id, label }])
       setSelectedCols([])
       setStepError('')
     }
@@ -590,15 +596,13 @@ export default function Home() {
                 Steps (in order)
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {selectedSteps.map((stratId, i) => {
-                  const strat = strategies.find(s => s.id === stratId)
-                  return (
-                    <div key={`${stratId}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '8px 14px' }}>
+                {selectedSteps.map((step, i) => (
+                    <div key={`${step.id}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '8px 14px' }}>
                       <span style={{ fontSize: 11, fontWeight: 600, color: '#9ca3af', minWidth: 52 }}>
                         Step {i + 1}
                       </span>
                       <span style={{ flex: 1, fontSize: 13, color: '#1d4ed8', fontWeight: 500 }}>
-                        {strat?.label ?? stratId}
+                        {step.label}
                       </span>
                       <button
                         disabled={i === 0}
@@ -619,8 +623,7 @@ export default function Home() {
                         style={{ color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, padding: '0 2px' }}
                       >Remove</button>
                     </div>
-                  )
-                })}
+                  ))}
               </div>
             </div>
           )}

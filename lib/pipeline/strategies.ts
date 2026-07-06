@@ -40,6 +40,34 @@ export const ZILLOW_STRATEGIES: MatchStrategy[] = [
     fuzzy: true,
   },
   {
+    id: 'name_exact_email',
+    label: 'Name (exact) + Email',
+    columns: ['Name', 'Email'],
+    branch: 'zillow',
+    fuzzy: false,
+  },
+  {
+    id: 'name_fuzzy_email',
+    label: 'Name (fuzzy) + Email',
+    columns: ['Name', 'Email'],
+    branch: 'zillow',
+    fuzzy: true,
+  },
+  {
+    id: 'name_exact_phone',
+    label: 'Name (exact) + Phone',
+    columns: ['Name', 'Phone'],
+    branch: 'zillow',
+    fuzzy: false,
+  },
+  {
+    id: 'name_fuzzy_phone',
+    label: 'Name (fuzzy) + Phone',
+    columns: ['Name', 'Phone'],
+    branch: 'zillow',
+    fuzzy: true,
+  },
+  {
     id: 'name_company_state',
     label: 'Name (fuzzy) + Company + State',
     columns: ['Name', 'Company', 'Location'],
@@ -133,7 +161,20 @@ export const MAD_STRATEGIES: MatchStrategy[] = [
   },
 ]
 
-export const DEFAULT_ZILLOW_CONFIG: string[] = ZILLOW_STRATEGIES.map(s => s.id)
+export const DEFAULT_ZILLOW_CONFIG: string[] = [
+  'email_company',
+  'email',
+  'name_exact_email',
+  'name_fuzzy_email',
+  'name_company',
+  'website',
+  'name_exact_phone',
+  'name_fuzzy_phone',
+  'phone_name_fuzzy',
+  'name_company_state',
+  'name_state_fuzzy',
+  'name_state_exact',
+]
 
 export const DEFAULT_MAD_CONFIG: string[] = [
   'email',

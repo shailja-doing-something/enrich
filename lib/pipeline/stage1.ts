@@ -4,8 +4,12 @@ import type { EnrichRow } from '@/lib/supabase/types'
 const FALLBACK_ZILLOW_CONFIG = [
   'email_company',
   'email',
+  'name_exact_email',
+  'name_fuzzy_email',
   'name_company',
   'website',
+  'name_exact_phone',
+  'name_fuzzy_phone',
   'phone_name_fuzzy',
   'name_company_state',
   'name_state_fuzzy',
@@ -183,6 +187,26 @@ async function lookupZillowProfile(
       case 'phone_name_fuzzy':
         if (rawPhone.length !== 10 || !name) continue
         data = await rpc('find_zillow_by_phone_name', { p_phone: rawPhone, p_name: name })
+        break
+
+      case 'name_exact_email':
+        if (!first || !last || !email) continue
+        data = await rpc('find_zillow_by_name_exact_email', { p_first_name: first, p_last_name: last, p_email: email })
+        break
+
+      case 'name_fuzzy_email':
+        if (!first || !last || !email) continue
+        data = await rpc('find_zillow_by_name_fuzzy_email', { p_first_name: first, p_last_name: last, p_email: email })
+        break
+
+      case 'name_exact_phone':
+        if (!first || !last || rawPhone.length !== 10) continue
+        data = await rpc('find_zillow_by_name_exact_phone', { p_first_name: first, p_last_name: last, p_phone: rawPhone })
+        break
+
+      case 'name_fuzzy_phone':
+        if (!first || !last || rawPhone.length !== 10) continue
+        data = await rpc('find_zillow_by_name_fuzzy_phone', { p_first_name: first, p_last_name: last, p_phone: rawPhone })
         break
 
       case 'name_company_state':
