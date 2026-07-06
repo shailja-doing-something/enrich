@@ -30,6 +30,8 @@ function columnsToStrategyId(cols: string[], fuzzyMode: boolean, br: Branch): st
     if (key === 'name') return fuzzyMode ? 'name_state_fuzzy' : 'name_state_exact'
   }
   if (br === 'mad') {
+    if (key === 'email+name') return fuzzyMode ? 'name_fuzzy_email' : 'name_exact_email'
+    if (key === 'name+phone') return fuzzyMode ? 'name_fuzzy_phone' : 'name_exact_phone'
     if (key === 'location+name') return fuzzyMode ? 'name_state_fuzzy' : 'name_state_exact'
     if (key === 'name') return fuzzyMode ? 'name_fuzzy' : 'name_exact'
   }
@@ -76,6 +78,10 @@ function MadMatchBadge({ type }: { type: string | null }) {
   const colors: Record<string, { bg: string; color: string }> = {
     email:            { bg: '#dcfce7', color: '#22c55e' },
     phone:            { bg: '#dbeafe', color: '#3b82f6' },
+    name_exact_email: { bg: '#d1fae5', color: '#065f46' },
+    name_fuzzy_email: { bg: '#a7f3d0', color: '#047857' },
+    name_exact_phone: { bg: '#e0f2fe', color: '#0369a1' },
+    name_fuzzy_phone: { bg: '#bae6fd', color: '#0284c7' },
     name_state_exact: { bg: '#f3e8ff', color: '#a855f7' },
     name_state_fuzzy: { bg: '#fef9c3', color: '#eab308' },
     name_exact:       { bg: '#f3e8ff', color: '#a855f7' },
@@ -546,6 +552,17 @@ export default function Home() {
 
           {/* Add Step */}
           <div className="mb-6">
+            {selectedCols.length > 0 && (() => {
+              const previewId = columnsToStrategyId(selectedCols, fuzzy, branchRef.current)
+              const previewLabel = previewId
+                ? strategies.find(s => s.id === previewId)?.label ?? previewId
+                : null
+              return previewLabel ? (
+                <p style={{ marginBottom: 8, fontSize: 12, color: '#15803d' }}>
+                  ✓ Will match as: <strong>{previewLabel}</strong>
+                </p>
+              ) : null
+            })()}
             <button
               onClick={handleAddStep}
               style={{

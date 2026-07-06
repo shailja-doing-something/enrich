@@ -57,6 +57,34 @@ async function lookupMadAgent(
         data = await rpc<Record<string, unknown>>('find_mad_agent_by_phone', { p_phone: rawPhone })
         break
 
+      case 'name_exact_email':
+        if (!first || !last || !email) continue
+        data = await rpc<Record<string, unknown>>(
+          'find_mad_agent_by_name_exact_email',
+          { p_first_name: first, p_last_name: last, p_email: email })
+        break
+
+      case 'name_fuzzy_email':
+        if (!first || !last || !email) continue
+        data = await rpc<Record<string, unknown>>(
+          'find_mad_agent_by_name_fuzzy_email',
+          { p_first_name: first, p_last_name: last, p_email: email })
+        break
+
+      case 'name_exact_phone':
+        if (!first || !last || rawPhone.length !== 10) continue
+        data = await rpc<Record<string, unknown>>(
+          'find_mad_agent_by_name_exact_phone',
+          { p_first_name: first, p_last_name: last, p_phone: rawPhone })
+        break
+
+      case 'name_fuzzy_phone':
+        if (!first || !last || rawPhone.length !== 10) continue
+        data = await rpc<Record<string, unknown>>(
+          'find_mad_agent_by_name_fuzzy_phone',
+          { p_first_name: first, p_last_name: last, p_phone: rawPhone })
+        break
+
       case 'name_state_exact':
         if (!first || !last) continue
         data = await rpc<Record<string, unknown>>(

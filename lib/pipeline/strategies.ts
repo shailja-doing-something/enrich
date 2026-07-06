@@ -76,6 +76,34 @@ export const MAD_STRATEGIES: MatchStrategy[] = [
     branch: 'mad',
   },
   {
+    id: 'name_exact_email',
+    label: 'Name (exact) + Email',
+    columns: ['Name', 'Email'],
+    branch: 'mad',
+    fuzzy: false,
+  },
+  {
+    id: 'name_fuzzy_email',
+    label: 'Name (fuzzy) + Email',
+    columns: ['Name', 'Email'],
+    branch: 'mad',
+    fuzzy: true,
+  },
+  {
+    id: 'name_exact_phone',
+    label: 'Name (exact) + Phone',
+    columns: ['Name', 'Phone'],
+    branch: 'mad',
+    fuzzy: false,
+  },
+  {
+    id: 'name_fuzzy_phone',
+    label: 'Name (fuzzy) + Phone',
+    columns: ['Name', 'Phone'],
+    branch: 'mad',
+    fuzzy: true,
+  },
+  {
     id: 'name_state_exact',
     label: 'Name (exact) + State',
     columns: ['Name', 'Location'],
@@ -107,4 +135,15 @@ export const MAD_STRATEGIES: MatchStrategy[] = [
 
 export const DEFAULT_ZILLOW_CONFIG: string[] = ZILLOW_STRATEGIES.map(s => s.id)
 
-export const DEFAULT_MAD_CONFIG: string[] = MAD_STRATEGIES.map(s => s.id)
+export const DEFAULT_MAD_CONFIG: string[] = [
+  'email',
+  'name_exact_email',
+  'name_fuzzy_email',
+  'phone',
+  'name_exact_phone',
+  'name_fuzzy_phone',
+  'name_state_exact',
+  'name_state_fuzzy',
+  'name_exact',
+  'name_fuzzy',
+]
