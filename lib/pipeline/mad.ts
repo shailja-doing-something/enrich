@@ -130,7 +130,8 @@ async function lookupMadAgent(
         continue
     }
 
-    if (data?.agent_id) {
+    if (data?.mad_agent_uuid) {
+      console.log('[mad/lookup] match found:', strategyId, data.mad_agent_uuid)
       return {
         match_type: strategyId,
         mad_profile: data,
