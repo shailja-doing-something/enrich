@@ -24,6 +24,13 @@ function splitName(fullName: string): { first: string; last: string } {
   return { first: parts[0], last: parts.slice(1).join(' ') }
 }
 
+const MAD_DEFAULT_CONFIG: string[][] = [
+  ['Email'],
+  ['Phone'],
+  ['Name', 'Location'],
+  ['Name'],
+]
+
 async function lookupMadAgent(
   row: MadEnrichRow,
   config: string[][]
@@ -31,6 +38,10 @@ async function lookupMadAgent(
   match_type: string
   mad_profile: Record<string, unknown>
 }> {
+  const effectiveConfig = config.length > 0 ? config : MAD_DEFAULT_CONFIG
+  console.log('[mad] config:', JSON.stringify(effectiveConfig))
+  console.log('[mad] row email:', row.email, 'name:', row.name, 'phone:', row.phone)
+
   const email = (row.email ?? '').trim()
   const phone = (row.phone ?? '').replace(/\D/g, '').slice(-10)
   const name  = (row.name  ?? '').trim()
@@ -38,7 +49,7 @@ async function lookupMadAgent(
   const stateCode  = stateMatch?.[1] ?? ''
   const { first, last } = splitName(name)
 
-  for (const step of config) {
+  for (const step of effectiveConfig) {
     const cols = step.map(c => c.toLowerCase())
     const hasEmail    = cols.includes('email')
     const hasName     = cols.includes('name')
@@ -53,15 +64,17 @@ async function lookupMadAgent(
     const key = [...cols].sort().join('+')
     let data: Record<string, unknown> | null = null
 
-    if (key === 'email') {
+    if (key === 'email' || key === 'company+email' || key === 'email+location') {
       data = await rpc<Record<string, unknown>>('find_mad_agent_by_email', { p_email: email })
-    } else if (key === 'phone') {
+    } else if (key === 'phone' || key === 'name+phone') {
       data = await rpc<Record<string, unknown>>('find_mad_agent_by_phone', { p_phone: phone })
+    } else if (key === 'email+name') {
+      data = await rpc<Record<string, unknown>>('find_mad_agent_by_email', { p_email: email })
     } else if (key === 'location+name') {
       data = await rpc<Record<string, unknown>>(
         'find_mad_agent_by_name_state_exact',
         { p_first_name: first, p_last_name: last, p_state: stateCode })
-    } else if (key === 'name') {
+    } else if (key === 'name' || key === 'company+name') {
       data = await rpc<Record<string, unknown>>(
         'find_mad_agent_by_name_state_exact',
         { p_first_name: first, p_last_name: last, p_state: '' })
@@ -100,7 +113,7 @@ export async function runMadLookup(jobId: string): Promise<void> {
       .eq('id', jobId)
       .single()
     const config: string[][] = ((jobData as Record<string, unknown>)?.match_config as string[][] | null) ?? []
-    console.log(`[mad] steps=${config.length}`)
+    console.log(`[mad] steps=${config.length} config=${JSON.stringify(config)}`)
 
     const { data: rows, error: rowsErr } = await supabaseAdmin
       .from('mad_enrich_rows')

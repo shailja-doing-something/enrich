@@ -28,7 +28,15 @@ export async function POST(request: NextRequest) {
   }
 
   const configRaw = formData.get('match_config')
-  const matchConfig: string[][] = configRaw ? JSON.parse(configRaw as string) : []
+  let matchConfig: string[][] = []
+  if (configRaw && typeof configRaw === 'string') {
+    try {
+      matchConfig = JSON.parse(configRaw)
+    } catch (e) {
+      console.error('[mad/upload] failed to parse match_config:', configRaw, e)
+    }
+  }
+  console.log('[mad/upload] match_config:', JSON.stringify(matchConfig))
 
   const { data: job, error: jobErr } = await supabaseAdmin
     .from('mad_enrich_jobs')

@@ -31,7 +31,7 @@ export async function runStage1(jobId: string): Promise<void> {
       .eq('id', jobId)
       .single()
     const config: string[][] = ((jobData as Record<string, unknown>)?.match_config as string[][] | null) ?? []
-    console.log(`[stage1] jobId=${jobId} steps=${config.length}`)
+    console.log(`[stage1] jobId=${jobId} steps=${config.length} config=${JSON.stringify(config)}`)
 
     const { data: rows, error: fetchErr } = await supabaseAdmin
       .from('enrich_rows')
@@ -106,10 +106,21 @@ async function processRow(row: EnrichRow, config: string[][]): Promise<LookupRes
   }
 }
 
+const ZILLOW_DEFAULT_CONFIG: string[][] = [
+  ['Email', 'Company'],
+  ['Email'],
+  ['Name', 'Company'],
+  ['Website'],
+  ['Phone', 'Name'],
+  ['Name', 'Company', 'Location'],
+  ['Name', 'Location'],
+]
+
 async function lookupZillowProfile(
   row: EnrichRow,
   config: string[][]
 ): Promise<LookupResult> {
+  const effectiveConfig = config.length > 0 ? config : ZILLOW_DEFAULT_CONFIG
   const name      = (row.name    ?? '').trim()
   const email     = (row.email   ?? '').trim()
   const company   = (row.company ?? '').trim()
@@ -131,7 +142,7 @@ async function lookupZillowProfile(
     } catch (e) { console.error(`[lookup] ${rpcName} threw`, e); return null }
   }
 
-  for (const step of config) {
+  for (const step of effectiveConfig) {
     const cols = step.map(c => c.toLowerCase())
     const hasEmail    = cols.includes('email')
     const hasName     = cols.includes('name')
