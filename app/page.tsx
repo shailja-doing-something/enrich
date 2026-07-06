@@ -4,12 +4,17 @@ import { useState, useEffect, useRef } from 'react'
 import type { DragEvent, ChangeEvent } from 'react'
 import Papa from 'papaparse'
 import type { EnrichRow, MadEnrichRow } from '@/lib/supabase/types'
+import {
+  ZILLOW_STRATEGIES,
+  MAD_STRATEGIES,
+  DEFAULT_ZILLOW_CONFIG,
+  DEFAULT_MAD_CONFIG,
+} from '@/lib/pipeline/strategies'
 
 type Stage  = 'A' | 'A2' | 'B'
 type Branch = 'zillow' | 'mad'
 
 const ALL_STANDARD_COLS = ['Name', 'Email', 'Phone', 'Location', 'Company', 'Website'] as const
-const MAD_ALLOWED_COLS  = new Set(['Name', 'Email', 'Phone', 'Location'])
 
 // ── sub-components ─────────────────────────────────────────────────────────
 
@@ -22,14 +27,15 @@ function ZillowMatchBadge({ type }: { type: string | null }) {
     )
   }
   const colors: Record<string, { bg: string; color: string }> = {
-    email_company:      { bg: '#dcfce7', color: '#15803d' },
-    email:              { bg: '#bbf7d0', color: '#22c55e' },
-    name_team:          { bg: '#f3e8ff', color: '#a855f7' },
-    website:            { bg: '#e0f2fe', color: '#0ea5e9' },
-    phone_name:         { bg: '#dbeafe', color: '#3b82f6' },
-    name_company_state: { bg: '#ffedd5', color: '#f97316' },
-    name_fuzzy:         { bg: '#fef9c3', color: '#eab308' },
-    no_match:           { bg: '#fee2e2', color: '#ef4444' },
+    email_company:     { bg: '#dcfce7', color: '#15803d' },
+    email:             { bg: '#bbf7d0', color: '#22c55e' },
+    name_company:      { bg: '#f3e8ff', color: '#a855f7' },
+    website:           { bg: '#e0f2fe', color: '#0ea5e9' },
+    phone_name_fuzzy:  { bg: '#dbeafe', color: '#3b82f6' },
+    name_company_state:{ bg: '#ffedd5', color: '#f97316' },
+    name_state_fuzzy:  { bg: '#fef9c3', color: '#eab308' },
+    name_state_exact:  { bg: '#ddd6fe', color: '#7c3aed' },
+    no_match:          { bg: '#fee2e2', color: '#ef4444' },
   }
   const c = colors[type] ?? { bg: '#f3f4f6', color: '#6b7280' }
   return (
@@ -48,11 +54,13 @@ function MadMatchBadge({ type }: { type: string | null }) {
     )
   }
   const colors: Record<string, { bg: string; color: string }> = {
-    email:      { bg: '#dcfce7', color: '#22c55e' },
-    phone:      { bg: '#dbeafe', color: '#3b82f6' },
-    name_exact: { bg: '#f3e8ff', color: '#a855f7' },
-    name_fuzzy: { bg: '#fef9c3', color: '#eab308' },
-    no_match:   { bg: '#fee2e2', color: '#ef4444' },
+    email:            { bg: '#dcfce7', color: '#22c55e' },
+    phone:            { bg: '#dbeafe', color: '#3b82f6' },
+    name_state_exact: { bg: '#f3e8ff', color: '#a855f7' },
+    name_state_fuzzy: { bg: '#fef9c3', color: '#eab308' },
+    name_exact:       { bg: '#f3e8ff', color: '#a855f7' },
+    name_fuzzy:       { bg: '#fef9c3', color: '#eab308' },
+    no_match:         { bg: '#fee2e2', color: '#ef4444' },
   }
   const c = colors[type] ?? { bg: '#f3f4f6', color: '#6b7280' }
   return (
@@ -145,10 +153,9 @@ export default function Home() {
   const [rows, setRows]   = useState<Record<string, unknown>[]>([])
 
   // A2 state
-  const [matchConfig, setMatchConfig]         = useState<string[][]>([])
+  const [selectedSteps, setSelectedSteps]     = useState<string[]>([])
   const [detectedColumns, setDetectedColumns] = useState<string[]>([])
   const [pendingFile, setPendingFile]         = useState<File | null>(null)
-  const [currentStepCols, setCurrentStepCols] = useState<string[]>([])
 
   const [uploading, setUploading]             = useState(false)
   const [error, setError]                     = useState<string | null>(null)
@@ -224,8 +231,7 @@ export default function Home() {
       )
       setDetectedColumns(found)
       setPendingFile(file)
-      setMatchConfig([])
-      setCurrentStepCols([])
+      setSelectedSteps([])
       setStage('A2')
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to read file')
@@ -254,7 +260,12 @@ export default function Home() {
     try {
       const fd = new FormData()
       fd.append('file', pendingFile)
-      fd.append('match_config', JSON.stringify(matchConfig))
+      const config = selectedSteps.length > 0
+        ? selectedSteps
+        : branchRef.current === 'mad'
+          ? DEFAULT_MAD_CONFIG
+          : DEFAULT_ZILLOW_CONFIG
+      fd.append('match_config', JSON.stringify(config))
 
       const endpoint = branchRef.current === 'mad'
         ? '/api/mad/upload'
@@ -304,9 +315,8 @@ export default function Home() {
     setStage('A')
     setError(null)
     setPendingFile(null)
-    setMatchConfig([])
+    setSelectedSteps([])
     setDetectedColumns([])
-    setCurrentStepCols([])
   }
 
   // ── Stage A — two-card upload screen ─────────────────────────────────────
@@ -391,125 +401,133 @@ export default function Home() {
     )
   }
 
-  // ── Stage A2 — match configuration ───────────────────────────────────────
+  // ── Stage A2 — strategy selection ────────────────────────────────────────
 
   if (stage === 'A2') {
-    const isMad         = branchRef.current === 'mad'
-    const availableCols = ALL_STANDARD_COLS.filter(col => detectedColumns.includes(col))
+    const isMad      = branchRef.current === 'mad'
+    const strategies = isMad ? MAD_STRATEGIES : ZILLOW_STRATEGIES
 
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="w-full max-w-lg">
-          <h1 className="text-xl font-semibold text-gray-800 mb-1">Configure match steps</h1>
+          <h1 className="text-xl font-semibold text-gray-800 mb-1">
+            Configure match steps ({isMad ? 'MAD' : 'Zillow'})
+          </h1>
           <p className="text-sm text-gray-500 mb-6">
-            Add steps in priority order. Each step combines one or more columns.
+            Select strategies in priority order. Steps run top-to-bottom until a match is found.
           </p>
 
-          {/* Column buttons */}
-          <div className="mb-4">
+          {/* Available strategies */}
+          <div className="mb-6">
             <p style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-              Available columns
+              Available strategies
             </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {availableCols.map(col => {
-                const disabled = isMad && !MAD_ALLOWED_COLS.has(col)
-                const selected = currentStepCols.includes(col)
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {strategies.map(strategy => {
+                const allMissing = strategy.columns.every(col => !detectedColumns.includes(col))
+                const alreadyAdded = selectedSteps.includes(strategy.id)
+                const disabled = allMissing || alreadyAdded
                 return (
-                  <button
-                    key={col}
-                    disabled={disabled}
-                    title={disabled ? 'Not available for MAD lookup' : undefined}
-                    onClick={() => {
-                      if (disabled) return
-                      setCurrentStepCols(prev =>
-                        prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
-                      )
-                    }}
+                  <div
+                    key={strategy.id}
                     style={{
-                      padding: '5px 14px',
-                      borderRadius: 9999,
-                      fontSize: 13,
-                      fontWeight: 500,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      background: disabled ? '#f9fafb' : 'white',
                       border: '1px solid',
-                      borderColor: disabled ? '#e5e7eb' : selected ? '#3b82f6' : '#d1d5db',
-                      background:  disabled ? '#f9fafb' : selected ? '#eff6ff' : 'white',
-                      color:       disabled ? '#d1d5db' : selected ? '#2563eb' : '#374151',
-                      cursor: disabled ? 'not-allowed' : 'pointer',
-                      transition: 'all 0.1s',
+                      borderColor: disabled ? '#e5e7eb' : '#d1d5db',
+                      borderRadius: 8,
+                      padding: '10px 14px',
+                      opacity: allMissing ? 0.5 : 1,
                     }}
                   >
-                    {col}
-                  </button>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 13, fontWeight: 500, color: disabled ? '#9ca3af' : '#374151' }}>
+                          {strategy.label}
+                        </span>
+                        {strategy.fuzzy && (
+                          <span style={{ fontSize: 10, fontWeight: 600, color: '#92400e', background: '#fef3c7', padding: '1px 6px', borderRadius: 9999 }}>
+                            fuzzy
+                          </span>
+                        )}
+                      </div>
+                      <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                        Requires: {strategy.columns.join(', ')}
+                        {allMissing ? ' — not in CSV' : ''}
+                      </p>
+                    </div>
+                    <button
+                      disabled={disabled}
+                      onClick={() => setSelectedSteps(prev => [...prev, strategy.id])}
+                      style={{
+                        padding: '5px 14px',
+                        fontSize: 12,
+                        fontWeight: 500,
+                        borderRadius: 6,
+                        border: '1px solid',
+                        borderColor: alreadyAdded ? '#d1d5db' : disabled ? '#e5e7eb' : '#3b82f6',
+                        background: alreadyAdded ? '#f9fafb' : disabled ? '#f3f4f6' : '#eff6ff',
+                        color: alreadyAdded ? '#9ca3af' : disabled ? '#d1d5db' : '#2563eb',
+                        cursor: disabled ? 'default' : 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {alreadyAdded ? '✓ Added' : '+ Add'}
+                    </button>
+                  </div>
                 )
               })}
             </div>
           </div>
 
-          {/* Add Step */}
-          <button
-            disabled={currentStepCols.length === 0}
-            onClick={() => {
-              if (currentStepCols.length === 0) return
-              setMatchConfig(prev => [...prev, [...currentStepCols]])
-              setCurrentStepCols([])
-            }}
-            style={{
-              marginBottom: 24,
-              padding: '7px 18px',
-              fontSize: 13,
-              fontWeight: 500,
-              borderRadius: 8,
-              background: currentStepCols.length === 0 ? '#e5e7eb' : '#2563eb',
-              color: currentStepCols.length === 0 ? '#9ca3af' : 'white',
-              border: 'none',
-              cursor: currentStepCols.length === 0 ? 'not-allowed' : 'pointer',
-              transition: 'background 0.1s',
-            }}
-          >
-            + Add Step
-          </button>
-
-          {/* Steps list */}
-          {matchConfig.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
+          {/* Selected steps */}
+          {selectedSteps.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
               <p style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
                 Steps (in order)
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {matchConfig.map((step, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px' }}>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: '#9ca3af', minWidth: 52 }}>
-                      Step {i + 1}
-                    </span>
-                    <span style={{ flex: 1, fontSize: 13, color: '#374151' }}>
-                      {step.join(' + ')}
-                    </span>
-                    <button
-                      disabled={i === 0}
-                      onClick={() => setMatchConfig(prev => {
-                        const a = [...prev]
-                        ;[a[i - 1], a[i]] = [a[i], a[i - 1]]
-                        return a
-                      })}
-                      style={{ color: i === 0 ? '#d1d5db' : '#6b7280', background: 'none', border: 'none', cursor: i === 0 ? 'not-allowed' : 'pointer', fontSize: 14, padding: '0 2px' }}
-                    >↑</button>
-                    <button
-                      disabled={i === matchConfig.length - 1}
-                      onClick={() => setMatchConfig(prev => {
-                        const a = [...prev]
-                        ;[a[i], a[i + 1]] = [a[i + 1], a[i]]
-                        return a
-                      })}
-                      style={{ color: i === matchConfig.length - 1 ? '#d1d5db' : '#6b7280', background: 'none', border: 'none', cursor: i === matchConfig.length - 1 ? 'not-allowed' : 'pointer', fontSize: 14, padding: '0 2px' }}
-                    >↓</button>
-                    <button
-                      onClick={() => setMatchConfig(prev => prev.filter((_, j) => j !== i))}
-                      style={{ color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, padding: '0 2px' }}
-                    >Remove</button>
-                  </div>
-                ))}
+                {selectedSteps.map((stratId, i) => {
+                  const strat = strategies.find(s => s.id === stratId)
+                  return (
+                    <div key={stratId} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '8px 14px' }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#9ca3af', minWidth: 52 }}>
+                        Step {i + 1}
+                      </span>
+                      <span style={{ flex: 1, fontSize: 13, color: '#1d4ed8', fontWeight: 500 }}>
+                        {strat?.label ?? stratId}
+                      </span>
+                      <button
+                        disabled={i === 0}
+                        onClick={() => setSelectedSteps(prev => {
+                          const a = [...prev]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; return a
+                        })}
+                        style={{ color: i === 0 ? '#d1d5db' : '#6b7280', background: 'none', border: 'none', cursor: i === 0 ? 'not-allowed' : 'pointer', fontSize: 14, padding: '0 2px' }}
+                      >↑</button>
+                      <button
+                        disabled={i === selectedSteps.length - 1}
+                        onClick={() => setSelectedSteps(prev => {
+                          const a = [...prev]; [a[i], a[i + 1]] = [a[i + 1], a[i]]; return a
+                        })}
+                        style={{ color: i === selectedSteps.length - 1 ? '#d1d5db' : '#6b7280', background: 'none', border: 'none', cursor: i === selectedSteps.length - 1 ? 'not-allowed' : 'pointer', fontSize: 14, padding: '0 2px' }}
+                      >↓</button>
+                      <button
+                        onClick={() => setSelectedSteps(prev => prev.filter((_, j) => j !== i))}
+                        style={{ color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, padding: '0 2px' }}
+                      >Remove</button>
+                    </div>
+                  )
+                })}
               </div>
             </div>
+          )}
+
+          {selectedSteps.length === 0 && (
+            <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 20, fontStyle: 'italic' }}>
+              No steps selected — all default strategies will run.
+            </p>
           )}
 
           {error && <ErrorBanner message={error} />}
@@ -520,8 +538,7 @@ export default function Home() {
               onClick={() => {
                 setPendingFile(null)
                 setDetectedColumns([])
-                setMatchConfig([])
-                setCurrentStepCols([])
+                setSelectedSteps([])
                 setError(null)
                 setStage('A')
               }}
@@ -530,7 +547,7 @@ export default function Home() {
               ← Back
             </button>
             <button
-              disabled={matchConfig.length === 0 || uploading}
+              disabled={uploading}
               onClick={handleRunMatching}
               style={{
                 flex: 1,
@@ -539,9 +556,9 @@ export default function Home() {
                 fontWeight: 500,
                 borderRadius: 8,
                 border: 'none',
-                background: matchConfig.length === 0 || uploading ? '#e5e7eb' : '#2563eb',
-                color: matchConfig.length === 0 || uploading ? '#9ca3af' : 'white',
-                cursor: matchConfig.length === 0 || uploading ? 'not-allowed' : 'pointer',
+                background: uploading ? '#e5e7eb' : '#2563eb',
+                color: uploading ? '#9ca3af' : 'white',
+                cursor: uploading ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',

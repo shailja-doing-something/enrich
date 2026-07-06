@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase/client'
 import type { MadEnrichRow } from '@/lib/supabase/types'
+import { DEFAULT_MAD_CONFIG } from '@/lib/pipeline/strategies'
 
 async function rpc<T>(
   name: string,
@@ -24,68 +25,74 @@ function splitName(fullName: string): { first: string; last: string } {
   return { first: parts[0], last: parts.slice(1).join(' ') }
 }
 
-const MAD_DEFAULT_CONFIG: string[][] = [
-  ['Email'],
-  ['Phone'],
-  ['Name', 'Location'],
-  ['Name'],
-]
-
 async function lookupMadAgent(
   row: MadEnrichRow,
-  config: string[][]
+  configIds: string[]
 ): Promise<{
   match_type: string
   mad_profile: Record<string, unknown>
 }> {
-  const effectiveConfig = config.length > 0 ? config : MAD_DEFAULT_CONFIG
-  console.log('[mad] config:', JSON.stringify(effectiveConfig))
-  console.log('[mad] row email:', row.email, 'name:', row.name, 'phone:', row.phone)
-
-  const email = (row.email ?? '').trim()
-  const phone = (row.phone ?? '').replace(/\D/g, '').slice(-10)
-  const name  = (row.name  ?? '').trim()
+  const email    = (row.email ?? '').trim()
+  const rawPhone = (row.phone ?? '').replace(/\D/g, '').slice(-10)
+  const name     = (row.name  ?? '').trim()
   const stateMatch = (row.location ?? '').match(/,\s*([A-Z]{2})\s*$/)
   const stateCode  = stateMatch?.[1] ?? ''
   const { first, last } = splitName(name)
 
-  for (const step of effectiveConfig) {
-    const cols = step.map(c => c.toLowerCase())
-    const hasEmail    = cols.includes('email')
-    const hasName     = cols.includes('name')
-    const hasPhone    = cols.includes('phone')
-    const hasLocation = cols.includes('location')
+  console.log('[mad] config:', configIds)
+  console.log('[mad] email:', email, 'name:', name, 'phone:', rawPhone, 'state:', stateCode)
 
-    if (hasEmail    && !email)            continue
-    if (hasName     && (!first || !last)) continue
-    if (hasPhone    && phone.length !== 10) continue
-    if (hasLocation && !stateCode)        continue
-
-    const key = [...cols].sort().join('+')
+  for (const strategyId of configIds) {
     let data: Record<string, unknown> | null = null
 
-    if (key === 'email' || key === 'company+email' || key === 'email+location') {
-      data = await rpc<Record<string, unknown>>('find_mad_agent_by_email', { p_email: email })
-    } else if (key === 'phone' || key === 'name+phone') {
-      data = await rpc<Record<string, unknown>>('find_mad_agent_by_phone', { p_phone: phone })
-    } else if (key === 'email+name') {
-      data = await rpc<Record<string, unknown>>('find_mad_agent_by_email', { p_email: email })
-    } else if (key === 'location+name') {
-      data = await rpc<Record<string, unknown>>(
-        'find_mad_agent_by_name_state_exact',
-        { p_first_name: first, p_last_name: last, p_state: stateCode })
-    } else if (key === 'name' || key === 'company+name') {
-      data = await rpc<Record<string, unknown>>(
-        'find_mad_agent_by_name_state_exact',
-        { p_first_name: first, p_last_name: last, p_state: '' })
-    } else {
-      console.warn('[mad] unknown step combo:', key)
-      continue
+    switch (strategyId) {
+
+      case 'email':
+        if (!email) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_email', { p_email: email })
+        break
+
+      case 'phone':
+        if (rawPhone.length !== 10) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_phone', { p_phone: rawPhone })
+        break
+
+      case 'name_state_exact':
+        if (!first || !last) continue
+        data = await rpc<Record<string, unknown>>(
+          'find_mad_agent_by_name_state_exact',
+          { p_first_name: first, p_last_name: last, p_state: stateCode })
+        break
+
+      case 'name_state_fuzzy':
+        if (!first || !last) continue
+        data = await rpc<Record<string, unknown>>(
+          'find_mad_agent_by_name_state',
+          { p_first_name: first, p_last_name: last, p_state: stateCode })
+        break
+
+      case 'name_exact':
+        if (!first || !last) continue
+        data = await rpc<Record<string, unknown>>(
+          'find_mad_agent_by_name_state_exact',
+          { p_first_name: first, p_last_name: last, p_state: '' })
+        break
+
+      case 'name_fuzzy':
+        if (!first || !last) continue
+        data = await rpc<Record<string, unknown>>(
+          'find_mad_agent_by_name_state',
+          { p_first_name: first, p_last_name: last, p_state: '' })
+        break
+
+      default:
+        console.warn('[mad] unknown strategy:', strategyId)
+        continue
     }
 
     if (data?.agent_id) {
       return {
-        match_type: key.replace(/\+/g, '_'),
+        match_type: strategyId,
         mad_profile: data,
       }
     }
@@ -112,8 +119,14 @@ export async function runMadLookup(jobId: string): Promise<void> {
       .select('match_config')
       .eq('id', jobId)
       .single()
-    const config: string[][] = ((jobData as Record<string, unknown>)?.match_config as string[][] | null) ?? []
-    console.log(`[mad] steps=${config.length} config=${JSON.stringify(config)}`)
+
+    const raw = (jobData as Record<string, unknown>)?.match_config
+    const configIds: string[] = (
+      Array.isArray(raw) && raw.length > 0
+    )
+      ? (raw as unknown[]).flat().filter((x): x is string => typeof x === 'string')
+      : DEFAULT_MAD_CONFIG
+    console.log('[mad] using config:', configIds)
 
     const { data: rows, error: rowsErr } = await supabaseAdmin
       .from('mad_enrich_rows')
@@ -138,7 +151,7 @@ export async function runMadLookup(jobId: string): Promise<void> {
       const batch = rows.slice(i, i + batchSize)
       await Promise.all(batch.map(async (row) => {
         try {
-          const { match_type, mad_profile } = await lookupMadAgent(row as MadEnrichRow, config)
+          const { match_type, mad_profile } = await lookupMadAgent(row as MadEnrichRow, configIds)
           if (match_type !== 'no_match') matchedCount++
           await supabaseAdmin
             .from('mad_enrich_rows')

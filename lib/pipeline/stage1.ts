@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase/client'
 import type { EnrichRow } from '@/lib/supabase/types'
+import { DEFAULT_ZILLOW_CONFIG } from '@/lib/pipeline/strategies'
 
 type LookupResult = {
   zillow_url:     string | null
@@ -30,8 +31,14 @@ export async function runStage1(jobId: string): Promise<void> {
       .select('match_config')
       .eq('id', jobId)
       .single()
-    const config: string[][] = ((jobData as Record<string, unknown>)?.match_config as string[][] | null) ?? []
-    console.log(`[stage1] jobId=${jobId} steps=${config.length} config=${JSON.stringify(config)}`)
+
+    const raw = (jobData as Record<string, unknown>)?.match_config
+    const configIds: string[] = (
+      Array.isArray(raw) && raw.length > 0
+    )
+      ? (raw as unknown[]).flat().filter((x): x is string => typeof x === 'string')
+      : DEFAULT_ZILLOW_CONFIG
+    console.log('[stage1] using config:', configIds)
 
     const { data: rows, error: fetchErr } = await supabaseAdmin
       .from('enrich_rows')
@@ -48,7 +55,7 @@ export async function runStage1(jobId: string): Promise<void> {
     const BATCH = 10
     for (let i = 0; i < pending.length; i += BATCH) {
       const slice   = pending.slice(i, i + BATCH)
-      const results = await Promise.all(slice.map(row => processRow(row, config)))
+      const results = await Promise.all(slice.map(row => processRow(row, configIds)))
       for (const result of results) {
         if (result.zillow_url !== null) matchedCount++
       }
@@ -84,9 +91,9 @@ export async function runStage1(jobId: string): Promise<void> {
   }
 }
 
-async function processRow(row: EnrichRow, config: string[][]): Promise<LookupResult> {
+async function processRow(row: EnrichRow, configIds: string[]): Promise<LookupResult> {
   try {
-    const result = await lookupZillowProfile(row, config)
+    const result = await lookupZillowProfile(row, configIds)
     const { data: rowUpdated, error } = await supabaseAdmin
       .from('enrich_rows')
       .update({
@@ -106,21 +113,10 @@ async function processRow(row: EnrichRow, config: string[][]): Promise<LookupRes
   }
 }
 
-const ZILLOW_DEFAULT_CONFIG: string[][] = [
-  ['Email', 'Company'],
-  ['Email'],
-  ['Name', 'Company'],
-  ['Website'],
-  ['Phone', 'Name'],
-  ['Name', 'Company', 'Location'],
-  ['Name', 'Location'],
-]
-
 async function lookupZillowProfile(
   row: EnrichRow,
-  config: string[][]
+  configIds: string[]
 ): Promise<LookupResult> {
-  const effectiveConfig = config.length > 0 ? config : ZILLOW_DEFAULT_CONFIG
   const name      = (row.name    ?? '').trim()
   const email     = (row.email   ?? '').trim()
   const company   = (row.company ?? '').trim()
@@ -142,52 +138,60 @@ async function lookupZillowProfile(
     } catch (e) { console.error(`[lookup] ${rpcName} threw`, e); return null }
   }
 
-  for (const step of effectiveConfig) {
-    const cols = step.map(c => c.toLowerCase())
-    const hasEmail    = cols.includes('email')
-    const hasName     = cols.includes('name')
-    const hasCompany  = cols.includes('company')
-    const hasWebsite  = cols.includes('website')
-    const hasPhone    = cols.includes('phone')
-    const hasLocation = cols.includes('location')
-
-    if (hasEmail    && !email)              continue
-    if (hasName     && (!first || !last))   continue
-    if (hasCompany  && !company)            continue
-    if (hasWebsite  && !website)            continue
-    if (hasPhone    && rawPhone.length !== 10) continue
-    if (hasLocation && !stateCode)          continue
-
-    const key = [...cols].sort().join('+')
+  for (const strategyId of configIds) {
     let data: ProfileRow | null = null
 
-    if (key === 'company+email') {
-      data = await rpc('find_zillow_by_email_company', { p_email: email, p_company: company })
-    } else if (key === 'email') {
-      data = await rpc('find_zillow_by_email', { p_email: email })
-    } else if (key === 'company+name') {
-      data = await rpc('find_zillow_by_name_team', { p_name: name, p_company: company })
-    } else if (key === 'website') {
-      data = await rpc('find_zillow_by_website', { p_website: website })
-    } else if (key === 'name+phone') {
-      data = await rpc('find_zillow_by_phone_name', { p_phone: rawPhone, p_name: name })
-    } else if (key === 'company+location+name') {
-      data = await rpc('find_zillow_by_name_company_state', { p_name: name, p_company: company, p_state: stateCode })
-    } else if (key === 'location+name') {
-      data = await rpc('find_zillow_by_name_state', { p_name: name, p_state: stateCode })
-    } else if (key === 'email+location') {
-      data = await rpc('find_zillow_by_email', { p_email: email })
-    } else if (key === 'company+email+location') {
-      data = await rpc('find_zillow_by_email_company', { p_email: email, p_company: company })
-    } else {
-      console.warn('[stage1] unknown step combo:', key)
-      continue
+    switch (strategyId) {
+
+      case 'email_company':
+        if (!email || !company) continue
+        data = await rpc('find_zillow_by_email_company', { p_email: email, p_company: company })
+        break
+
+      case 'email':
+        if (!email) continue
+        data = await rpc('find_zillow_by_email', { p_email: email })
+        break
+
+      case 'name_company':
+        if (!name || !company) continue
+        data = await rpc('find_zillow_by_name_team', { p_name: name, p_company: company })
+        break
+
+      case 'website':
+        if (!website) continue
+        data = await rpc('find_zillow_by_website', { p_website: website })
+        break
+
+      case 'phone_name_fuzzy':
+        if (rawPhone.length !== 10 || !name) continue
+        data = await rpc('find_zillow_by_phone_name', { p_phone: rawPhone, p_name: name })
+        break
+
+      case 'name_company_state':
+        if (!name || !company || !stateCode) continue
+        data = await rpc('find_zillow_by_name_company_state', { p_name: name, p_company: company, p_state: stateCode })
+        break
+
+      case 'name_state_fuzzy':
+        if (!name) continue
+        data = await rpc('find_zillow_by_name_state', { p_name: name, p_state: stateCode })
+        break
+
+      case 'name_state_exact':
+        if (!first || !last) continue
+        data = await rpc('find_zillow_by_name_state_exact', { p_first_name: first, p_last_name: last, p_state: stateCode })
+        break
+
+      default:
+        console.warn('[stage1] unknown strategy:', strategyId)
+        continue
     }
 
     if (data?.profile_link) {
       return {
         zillow_url:     data.profile_link as string,
-        match_type:     key.replace(/\+/g, '_'),
+        match_type:     strategyId,
         zillow_profile: data,
       }
     }

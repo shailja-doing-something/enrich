@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/supabase/client'
 import { parseCSV } from '@/lib/csv/parse'
+import { DEFAULT_MAD_CONFIG } from '@/lib/pipeline/strategies'
 
 export async function POST(request: NextRequest) {
   let formData: FormData
@@ -28,15 +29,21 @@ export async function POST(request: NextRequest) {
   }
 
   const configRaw = formData.get('match_config')
-  let matchConfig: string[][] = []
+  let matchConfig: string[] = []
   if (configRaw && typeof configRaw === 'string') {
     try {
-      matchConfig = JSON.parse(configRaw)
-    } catch (e) {
-      console.error('[mad/upload] failed to parse match_config:', configRaw, e)
+      const parsed = JSON.parse(configRaw)
+      if (Array.isArray(parsed)) {
+        matchConfig = (parsed as unknown[]).flat().filter((x): x is string => typeof x === 'string')
+      }
+    } catch {
+      console.error('[mad/upload] bad match_config:', configRaw)
     }
   }
-  console.log('[mad/upload] match_config:', JSON.stringify(matchConfig))
+  if (matchConfig.length === 0) {
+    matchConfig = DEFAULT_MAD_CONFIG
+  }
+  console.log('[mad/upload] match_config:', matchConfig)
 
   const { data: job, error: jobErr } = await supabaseAdmin
     .from('mad_enrich_jobs')
