@@ -16,6 +16,26 @@ type Branch = 'zillow' | 'mad'
 
 const ALL_STANDARD_COLS = ['Name', 'Email', 'Phone', 'Location', 'Company', 'Website'] as const
 
+function columnsToStrategyId(cols: string[], fuzzyMode: boolean, br: Branch): string | null {
+  const key = [...cols].map(c => c.toLowerCase()).sort().join('+')
+  if (key === 'email') return 'email'
+  if (key === 'phone') return 'phone'
+  if (br === 'zillow') {
+    if (key === 'company+email') return 'email_company'
+    if (key === 'company+name') return 'name_company'
+    if (key === 'website') return 'website'
+    if (key === 'name+phone') return 'phone_name_fuzzy'
+    if (key === 'company+location+name') return 'name_company_state'
+    if (key === 'location+name') return fuzzyMode ? 'name_state_fuzzy' : 'name_state_exact'
+    if (key === 'name') return fuzzyMode ? 'name_state_fuzzy' : 'name_state_exact'
+  }
+  if (br === 'mad') {
+    if (key === 'location+name') return fuzzyMode ? 'name_state_fuzzy' : 'name_state_exact'
+    if (key === 'name') return fuzzyMode ? 'name_fuzzy' : 'name_exact'
+  }
+  return null
+}
+
 // ── sub-components ─────────────────────────────────────────────────────────
 
 function ZillowMatchBadge({ type }: { type: string | null }) {
@@ -154,6 +174,9 @@ export default function Home() {
 
   // A2 state
   const [selectedSteps, setSelectedSteps]     = useState<string[]>([])
+  const [selectedCols, setSelectedCols]       = useState<string[]>([])
+  const [fuzzy, setFuzzy]                     = useState(true)
+  const [stepError, setStepError]             = useState('')
   const [detectedColumns, setDetectedColumns] = useState<string[]>([])
   const [pendingFile, setPendingFile]         = useState<File | null>(null)
 
@@ -232,6 +255,9 @@ export default function Home() {
       setDetectedColumns(found)
       setPendingFile(file)
       setSelectedSteps([])
+      setSelectedCols([])
+      setFuzzy(true)
+      setStepError('')
       setStage('A2')
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to read file')
@@ -316,6 +342,9 @@ export default function Home() {
     setError(null)
     setPendingFile(null)
     setSelectedSteps([])
+    setSelectedCols([])
+    setFuzzy(true)
+    setStepError('')
     setDetectedColumns([])
   }
 
@@ -401,11 +430,27 @@ export default function Home() {
     )
   }
 
-  // ── Stage A2 — strategy selection ────────────────────────────────────────
+  // ── Stage A2 — column-button step builder ────────────────────────────────
 
   if (stage === 'A2') {
     const isMad      = branchRef.current === 'mad'
     const strategies = isMad ? MAD_STRATEGIES : ZILLOW_STRATEGIES
+    const showFuzzyToggle = selectedCols.includes('Name')
+
+    const handleAddStep = () => {
+      if (selectedCols.length === 0) {
+        setStepError('Select at least one column first.')
+        return
+      }
+      const id = columnsToStrategyId(selectedCols, fuzzy, branchRef.current)
+      if (!id) {
+        setStepError("This column combination doesn't map to a known strategy. Try a different set.")
+        return
+      }
+      setSelectedSteps(prev => [...prev, id])
+      setSelectedCols([])
+      setStepError('')
+    }
 
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
@@ -414,72 +459,111 @@ export default function Home() {
             Configure match steps ({isMad ? 'MAD' : 'Zillow'})
           </h1>
           <p className="text-sm text-gray-500 mb-6">
-            Select strategies in priority order. Steps run top-to-bottom until a match is found.
+            Pick columns to match on, then click <strong>Add Step</strong>. Steps run in order until a match is found.
           </p>
 
-          {/* Available strategies */}
-          <div className="mb-6">
+          {/* 1. Column buttons */}
+          <div className="mb-4">
             <p style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-              Available strategies
+              1. Select columns
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {strategies.map(strategy => {
-                const allMissing = strategy.columns.every(col => !detectedColumns.includes(col))
-                const alreadyAdded = selectedSteps.includes(strategy.id)
-                const disabled = allMissing || alreadyAdded
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {detectedColumns.map(col => {
+                const disabledForMad = isMad && (col === 'Company' || col === 'Website')
+                const isSelected = selectedCols.includes(col)
                 return (
-                  <div
-                    key={strategy.id}
+                  <button
+                    key={col}
+                    disabled={disabledForMad}
+                    onClick={() => {
+                      setSelectedCols(prev =>
+                        prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
+                      )
+                      setStepError('')
+                    }}
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      background: disabled ? '#f9fafb' : 'white',
-                      border: '1px solid',
-                      borderColor: disabled ? '#e5e7eb' : '#d1d5db',
-                      borderRadius: 8,
-                      padding: '10px 14px',
-                      opacity: allMissing ? 0.5 : 1,
+                      padding: '6px 14px',
+                      fontSize: 13,
+                      fontWeight: 500,
+                      borderRadius: 9999,
+                      border: '1.5px solid',
+                      borderColor: disabledForMad ? '#e5e7eb' : isSelected ? '#2563eb' : '#d1d5db',
+                      background: disabledForMad ? '#f9fafb' : isSelected ? '#eff6ff' : 'white',
+                      color: disabledForMad ? '#d1d5db' : isSelected ? '#2563eb' : '#374151',
+                      cursor: disabledForMad ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.1s',
                     }}
                   >
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 13, fontWeight: 500, color: disabled ? '#9ca3af' : '#374151' }}>
-                          {strategy.label}
-                        </span>
-                        {strategy.fuzzy && (
-                          <span style={{ fontSize: 10, fontWeight: 600, color: '#92400e', background: '#fef3c7', padding: '1px 6px', borderRadius: 9999 }}>
-                            fuzzy
-                          </span>
-                        )}
-                      </div>
-                      <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
-                        Requires: {strategy.columns.join(', ')}
-                        {allMissing ? ' — not in CSV' : ''}
-                      </p>
-                    </div>
-                    <button
-                      disabled={disabled}
-                      onClick={() => setSelectedSteps(prev => [...prev, strategy.id])}
-                      style={{
-                        padding: '5px 14px',
-                        fontSize: 12,
-                        fontWeight: 500,
-                        borderRadius: 6,
-                        border: '1px solid',
-                        borderColor: alreadyAdded ? '#d1d5db' : disabled ? '#e5e7eb' : '#3b82f6',
-                        background: alreadyAdded ? '#f9fafb' : disabled ? '#f3f4f6' : '#eff6ff',
-                        color: alreadyAdded ? '#9ca3af' : disabled ? '#d1d5db' : '#2563eb',
-                        cursor: disabled ? 'default' : 'pointer',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {alreadyAdded ? '✓ Added' : '+ Add'}
-                    </button>
-                  </div>
+                    {col}
+                  </button>
                 )
               })}
+              {detectedColumns.length === 0 && (
+                <p style={{ fontSize: 12, color: '#9ca3af' }}>No standard columns detected in CSV.</p>
+              )}
             </div>
+          </div>
+
+          {/* 2. Fuzzy/Exact toggle — only when Name is selected */}
+          {showFuzzyToggle && (
+            <div className="mb-4">
+              <p style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                2. Name match type
+              </p>
+              <div style={{ display: 'inline-flex', border: '1px solid #d1d5db', borderRadius: 8, overflow: 'hidden' }}>
+                <button
+                  onClick={() => setFuzzy(true)}
+                  style={{
+                    padding: '6px 16px',
+                    fontSize: 13,
+                    fontWeight: 500,
+                    border: 'none',
+                    borderRight: '1px solid #d1d5db',
+                    background: fuzzy ? '#2563eb' : 'white',
+                    color: fuzzy ? 'white' : '#374151',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Fuzzy
+                </button>
+                <button
+                  onClick={() => setFuzzy(false)}
+                  style={{
+                    padding: '6px 16px',
+                    fontSize: 13,
+                    fontWeight: 500,
+                    border: 'none',
+                    background: !fuzzy ? '#2563eb' : 'white',
+                    color: !fuzzy ? 'white' : '#374151',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Exact
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Add Step */}
+          <div className="mb-6">
+            <button
+              onClick={handleAddStep}
+              style={{
+                padding: '8px 18px',
+                fontSize: 13,
+                fontWeight: 500,
+                borderRadius: 8,
+                border: '1px solid #3b82f6',
+                background: '#eff6ff',
+                color: '#2563eb',
+                cursor: 'pointer',
+              }}
+            >
+              + Add Step
+            </button>
+            {stepError && (
+              <p style={{ marginTop: 6, fontSize: 12, color: '#dc2626' }}>{stepError}</p>
+            )}
           </div>
 
           {/* Selected steps */}
@@ -492,7 +576,7 @@ export default function Home() {
                 {selectedSteps.map((stratId, i) => {
                   const strat = strategies.find(s => s.id === stratId)
                   return (
-                    <div key={stratId} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '8px 14px' }}>
+                    <div key={`${stratId}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '8px 14px' }}>
                       <span style={{ fontSize: 11, fontWeight: 600, color: '#9ca3af', minWidth: 52 }}>
                         Step {i + 1}
                       </span>
@@ -526,7 +610,7 @@ export default function Home() {
 
           {selectedSteps.length === 0 && (
             <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 20, fontStyle: 'italic' }}>
-              No steps selected — all default strategies will run.
+              No steps added — all default strategies will run.
             </p>
           )}
 
@@ -539,6 +623,9 @@ export default function Home() {
                 setPendingFile(null)
                 setDetectedColumns([])
                 setSelectedSteps([])
+                setSelectedCols([])
+                setFuzzy(true)
+                setStepError('')
                 setError(null)
                 setStage('A')
               }}
