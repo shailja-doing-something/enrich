@@ -80,8 +80,12 @@ export async function POST(request: NextRequest) {
   const host     = request.headers.get('host') ?? 'localhost:3000'
   const protocol = host.startsWith('localhost') ? 'http' : 'https'
   const baseUrl  = `${protocol}://${host}`
+  const runUrl   = `${baseUrl}/api/mad/run/${jobId}`
 
-  fetch(`${baseUrl}/api/mad/run/${jobId}`, {
+  console.log('[mad/upload] match_config stored:', matchConfig)
+  console.log('[mad/upload] triggering run at:', runUrl)
+
+  fetch(runUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   }).catch(err => console.error('[mad/upload] trigger failed', err))

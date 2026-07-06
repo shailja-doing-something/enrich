@@ -1,6 +1,18 @@
 import { supabaseAdmin } from '@/lib/supabase/client'
 import type { MadEnrichRow } from '@/lib/supabase/types'
-import { DEFAULT_MAD_CONFIG } from '@/lib/pipeline/strategies'
+
+const FALLBACK_MAD_CONFIG = [
+  'email',
+  'name_exact_email',
+  'name_fuzzy_email',
+  'phone',
+  'name_exact_phone',
+  'name_fuzzy_phone',
+  'name_state_exact',
+  'name_state_fuzzy',
+  'name_exact',
+  'name_fuzzy',
+]
 
 async function rpc<T>(
   name: string,
@@ -39,8 +51,8 @@ async function lookupMadAgent(
   const stateCode  = stateMatch?.[1] ?? ''
   const { first, last } = splitName(name)
 
-  console.log('[mad] config:', configIds)
-  console.log('[mad] email:', email, 'name:', name, 'phone:', rawPhone, 'state:', stateCode)
+  console.log('[mad/lookup] configIds:', JSON.stringify(configIds))
+  console.log('[mad/lookup] row:', row.email, row.name, row.phone)
 
   for (const strategyId of configIds) {
     let data: Record<string, unknown> | null = null
@@ -148,13 +160,20 @@ export async function runMadLookup(jobId: string): Promise<void> {
       .eq('id', jobId)
       .single()
 
-    const raw = (jobData as Record<string, unknown>)?.match_config
-    const configIds: string[] = (
-      Array.isArray(raw) && raw.length > 0
-    )
-      ? (raw as unknown[]).flat().filter((x): x is string => typeof x === 'string')
-      : DEFAULT_MAD_CONFIG
-    console.log('[mad] using config:', configIds)
+    console.log('[mad/run] job match_config:', JSON.stringify((jobData as Record<string, unknown>)?.match_config))
+
+    let effectiveConfig: string[] = FALLBACK_MAD_CONFIG
+    try {
+      const raw = (jobData as Record<string, unknown>)?.match_config
+      if (Array.isArray(raw) && raw.length > 0) {
+        const flat = (raw as unknown[]).flat().filter((x): x is string => typeof x === 'string')
+        if (flat.length > 0) effectiveConfig = flat
+      }
+    } catch (e) {
+      console.error('[mad/run] config parse error, using fallback:', e)
+    }
+
+    console.log('[mad/run] effectiveConfig:', JSON.stringify(effectiveConfig))
 
     const { data: rows, error: rowsErr } = await supabaseAdmin
       .from('mad_enrich_rows')
@@ -179,7 +198,7 @@ export async function runMadLookup(jobId: string): Promise<void> {
       const batch = rows.slice(i, i + batchSize)
       await Promise.all(batch.map(async (row) => {
         try {
-          const { match_type, mad_profile } = await lookupMadAgent(row as MadEnrichRow, configIds)
+          const { match_type, mad_profile } = await lookupMadAgent(row as MadEnrichRow, effectiveConfig)
           if (match_type !== 'no_match') matchedCount++
           await supabaseAdmin
             .from('mad_enrich_rows')

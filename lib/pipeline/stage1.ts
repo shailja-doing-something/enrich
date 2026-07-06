@@ -1,6 +1,16 @@
 import { supabaseAdmin } from '@/lib/supabase/client'
 import type { EnrichRow } from '@/lib/supabase/types'
-import { DEFAULT_ZILLOW_CONFIG } from '@/lib/pipeline/strategies'
+
+const FALLBACK_ZILLOW_CONFIG = [
+  'email_company',
+  'email',
+  'name_company',
+  'website',
+  'phone_name_fuzzy',
+  'name_company_state',
+  'name_state_fuzzy',
+  'name_state_exact',
+]
 
 type LookupResult = {
   zillow_url:     string | null
@@ -32,13 +42,20 @@ export async function runStage1(jobId: string): Promise<void> {
       .eq('id', jobId)
       .single()
 
-    const raw = (jobData as Record<string, unknown>)?.match_config
-    const configIds: string[] = (
-      Array.isArray(raw) && raw.length > 0
-    )
-      ? (raw as unknown[]).flat().filter((x): x is string => typeof x === 'string')
-      : DEFAULT_ZILLOW_CONFIG
-    console.log('[stage1] using config:', configIds)
+    console.log('[stage1] job match_config:', JSON.stringify((jobData as Record<string, unknown>)?.match_config))
+
+    let configIds: string[] = FALLBACK_ZILLOW_CONFIG
+    try {
+      const raw = (jobData as Record<string, unknown>)?.match_config
+      if (Array.isArray(raw) && raw.length > 0) {
+        const flat = (raw as unknown[]).flat().filter((x): x is string => typeof x === 'string')
+        if (flat.length > 0) configIds = flat
+      }
+    } catch (e) {
+      console.error('[stage1] config parse error, using fallback:', e)
+    }
+
+    console.log('[stage1] effectiveConfig:', JSON.stringify(configIds))
 
     const { data: rows, error: fetchErr } = await supabaseAdmin
       .from('enrich_rows')
