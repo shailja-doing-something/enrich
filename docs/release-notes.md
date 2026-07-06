@@ -1,5 +1,20 @@
 # Release Notes
 
+## [0.9.20] — 2026-07-06 — Column-button UI for match step configuration + named strategy system
+
+### Changed
+- `app/page.tsx` — Stage A2 UI replaced strategy-card approach with column-button builder: detected CSV columns shown as toggle pills; Company and Website disabled for MAD branch; fuzzy/exact two-button toggle appears when Name is selected; "Add Step" maps column selection to a named strategy ID via `columnsToStrategyId()`; inline error shown if combination doesn't resolve to a known strategy; steps list shows human-readable labels with ↑↓/Remove controls; Run Matching always enabled (defaults to full config if no steps added)
+- `app/page.tsx` — added `MAD Agent UUID` and `MAD Team UUID` columns to live MAD results table (first 8 chars truncated with title tooltip for full UUID)
+- `app/api/mad/export/[jobId]/route.ts` — added MAD Agent UUID and MAD Team UUID columns immediately after Match Type in CSV export
+
+### Added
+- `lib/pipeline/strategies.ts` — named strategy registry; `ZILLOW_STRATEGIES` and `MAD_STRATEGIES` arrays with `id`, `label`, `columns`, `branch`, `fuzzy`; `DEFAULT_ZILLOW_CONFIG` and `DEFAULT_MAD_CONFIG` as ordered `string[]` of strategy IDs; single source of truth used by upload routes, pipeline runners, and UI
+- `supabase/migrations/003_add_match_config.sql` — adds `match_config jsonb` to both `enrich_jobs` and `mad_enrich_jobs`; drops stale `match_type` CHECK constraints on `enrich_rows` and `mad_enrich_rows`
+
+### Fixed
+- All-no_match bug: `match_config` column was never in original migrations; Supabase silently ignored it on INSERT; pipeline received empty config and ran zero strategy iterations; fixed by applying `003_add_match_config.sql`
+- `lib/pipeline/mad.ts` and `lib/pipeline/stage1.ts` — rewrote from dynamic sorted-key approach to named `switch(strategyId)` per strategy ID; eliminates fragile key derivation (`['Name','Location'].sort().join('+')` → `'location+name'`)
+
 ## [0.9.19] — 2026-06-29 — Fix upload click-bubble loop + MAD match priority order
 
 ### Fixed
