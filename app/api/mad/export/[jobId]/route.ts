@@ -29,6 +29,7 @@ function buildMadCSV(rows: MadEnrichRow[]): string {
 
   const profileHeaders = [
     'Match Type',
+    'MAD Agent UUID', 'MAD Team UUID',
     'Team Name', 'Team City', 'Team State', 'Team Website',
     'Team Zillow URL', 'Brokerage Name', 'Brokerage Type',
     'Brokerage Website', 'Agent Job Title', 'Agent Domain',
@@ -49,6 +50,8 @@ function buildMadCSV(rows: MadEnrichRow[]): string {
       escape(row.website),
       ...extraKeys.map(k => escape((row.extra_fields as Record<string, unknown>)[k])),
       escape(row.match_type),
+      escape(p['mad_agent_uuid']),
+      escape(p['mad_team_uuid']),
       escape(p['team_name']),
       escape(p['team_city']),
       escape(p['team_state']),

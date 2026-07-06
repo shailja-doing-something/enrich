@@ -649,7 +649,7 @@ export default function Home() {
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
                   <tr>
-                    {['#', 'Name', 'Email', 'Location', 'Match', 'Team Name', 'Team Website', 'Team Zillow URL', 'Brokerage', 'Transactions (12m)'].map(h => (
+                    {['#', 'Name', 'Email', 'Location', 'Match', 'Agent UUID', 'Team UUID', 'Team Name', 'Team Website', 'Team Zillow URL', 'Brokerage', 'Transactions (12m)'].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{h}</th>
                     ))}
                   </tr>
@@ -657,13 +657,14 @@ export default function Home() {
                 <tbody className="divide-y divide-gray-100">
                   {rows.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="px-4 py-8 text-center text-gray-400 text-sm">Waiting for rows…</td>
+                      <td colSpan={12} className="px-4 py-8 text-center text-gray-400 text-sm">Waiting for rows…</td>
                     </tr>
                   ) : (
                     rows.map(rawRow => {
                       const row = rawRow as unknown as MadEnrichRow
                       const p   = row.mad_profile as Record<string, unknown>
                       const completed = row.completed_at !== null
+                      const truncate = (uuid: string) => uuid ? uuid.slice(0, 8) + '...' : '—'
                       return (
                         <tr key={row.id} className="hover:bg-gray-50">
                           <td className="px-4 py-2.5 text-gray-400 tabular-nums">{row.row_index + 1}</td>
@@ -672,6 +673,12 @@ export default function Home() {
                           <td className="px-4 py-2.5 text-gray-500 max-w-[140px] truncate">{row.location ?? '—'}</td>
                           <td className="px-4 py-2.5">
                             <MadMatchBadge type={completed ? (row.match_type ?? 'no_match') : null} />
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-500 font-mono text-xs" title={completed ? String(p['mad_agent_uuid'] ?? '') : undefined}>
+                            {completed ? truncate(String(p['mad_agent_uuid'] ?? '')) : '—'}
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-500 font-mono text-xs" title={completed ? String(p['mad_team_uuid'] ?? '') : undefined}>
+                            {completed ? truncate(String(p['mad_team_uuid'] ?? '')) : '—'}
                           </td>
                           <td className="px-4 py-2.5 text-gray-500 max-w-[160px] truncate">
                             {completed ? String(p['team_name'] ?? '—') : '—'}
