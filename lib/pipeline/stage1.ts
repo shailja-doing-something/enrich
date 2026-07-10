@@ -6,14 +6,26 @@ const FALLBACK_ZILLOW_CONFIG = [
   'email',
   'name_exact_email',
   'name_fuzzy_email',
+  'email_phone',
+  'email_state',
+  'name_exact_company',
   'name_company',
   'website',
   'name_exact_phone',
   'name_fuzzy_phone',
   'phone_name_fuzzy',
+  'phone',
+  'name_exact_company_state',
   'name_company_state',
-  'name_state_fuzzy',
+  'name_exact_email_state',
+  'name_fuzzy_email_state',
+  'name_exact_phone_state',
+  'name_fuzzy_phone_state',
+  'website_name_exact',
+  'website_name_fuzzy',
+  'website_state',
   'name_state_exact',
+  'name_state_fuzzy',
 ]
 
 type LookupResult = {
@@ -222,6 +234,66 @@ async function lookupZillowProfile(
       case 'name_state_exact':
         if (!first || !last) continue
         data = await rpc('find_zillow_by_name_state_exact', { p_first_name: first, p_last_name: last, p_state: stateCode })
+        break
+
+      case 'phone':
+        if (rawPhone.length !== 10) continue
+        data = await rpc('find_zillow_by_phone', { p_phone: rawPhone })
+        break
+
+      case 'email_state':
+        if (!email) continue
+        data = await rpc('find_zillow_by_email_state', { p_email: email, p_state: stateCode })
+        break
+
+      case 'email_phone':
+        if (!email || rawPhone.length !== 10) continue
+        data = await rpc('find_zillow_by_email_phone', { p_email: email, p_phone: rawPhone })
+        break
+
+      case 'name_exact_company':
+        if (!first || !last || !company) continue
+        data = await rpc('find_zillow_by_name_exact_company', { p_first_name: first, p_last_name: last, p_company: company })
+        break
+
+      case 'name_exact_company_state':
+        if (!first || !last || !company) continue
+        data = await rpc('find_zillow_by_name_exact_company_state', { p_first_name: first, p_last_name: last, p_company: company, p_state: stateCode })
+        break
+
+      case 'name_exact_email_state':
+        if (!first || !last || !email) continue
+        data = await rpc('find_zillow_by_name_exact_email_state', { p_first_name: first, p_last_name: last, p_email: email, p_state: stateCode })
+        break
+
+      case 'name_fuzzy_email_state':
+        if (!first || !last || !email) continue
+        data = await rpc('find_zillow_by_name_fuzzy_email_state', { p_first_name: first, p_last_name: last, p_email: email, p_state: stateCode })
+        break
+
+      case 'name_exact_phone_state':
+        if (!first || !last || rawPhone.length !== 10) continue
+        data = await rpc('find_zillow_by_name_exact_phone_state', { p_first_name: first, p_last_name: last, p_phone: rawPhone, p_state: stateCode })
+        break
+
+      case 'name_fuzzy_phone_state':
+        if (!first || !last || rawPhone.length !== 10) continue
+        data = await rpc('find_zillow_by_name_fuzzy_phone_state', { p_first_name: first, p_last_name: last, p_phone: rawPhone, p_state: stateCode })
+        break
+
+      case 'website_state':
+        if (!website) continue
+        data = await rpc('find_zillow_by_website_state', { p_website: website, p_state: stateCode })
+        break
+
+      case 'website_name_fuzzy':
+        if (!website || !name) continue
+        data = await rpc('find_zillow_by_website_name_fuzzy', { p_website: website, p_name: name })
+        break
+
+      case 'website_name_exact':
+        if (!website || !first || !last) continue
+        data = await rpc('find_zillow_by_website_name_exact', { p_website: website, p_first_name: first, p_last_name: last })
         break
 
       default:

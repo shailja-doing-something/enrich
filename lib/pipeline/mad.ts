@@ -3,11 +3,20 @@ import type { MadEnrichRow } from '@/lib/supabase/types'
 
 const FALLBACK_MAD_CONFIG = [
   'email',
+  'email_phone',
+  'email_state',
   'name_exact_email',
   'name_fuzzy_email',
+  'name_exact_email_state',
+  'name_fuzzy_email_state',
+  'name_exact_email_phone',
+  'name_fuzzy_email_phone',
   'phone',
+  'phone_state',
   'name_exact_phone',
   'name_fuzzy_phone',
+  'name_exact_phone_state',
+  'name_fuzzy_phone_state',
   'name_state_exact',
   'name_state_fuzzy',
   'name_exact',
@@ -123,6 +132,51 @@ async function lookupMadAgent(
         data = await rpc<Record<string, unknown>>(
           'find_mad_agent_by_name_state',
           { p_first_name: first, p_last_name: last, p_state: '' })
+        break
+
+      case 'email_phone':
+        if (!email || rawPhone.length !== 10) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_email_phone', { p_email: email, p_phone: rawPhone })
+        break
+
+      case 'email_state':
+        if (!email) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_email_state', { p_email: email, p_state: stateCode })
+        break
+
+      case 'phone_state':
+        if (rawPhone.length !== 10) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_phone_state', { p_phone: rawPhone, p_state: stateCode })
+        break
+
+      case 'name_exact_email_state':
+        if (!first || !last || !email) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_name_exact_email_state', { p_first_name: first, p_last_name: last, p_email: email, p_state: stateCode })
+        break
+
+      case 'name_fuzzy_email_state':
+        if (!first || !last || !email) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_name_fuzzy_email_state', { p_first_name: first, p_last_name: last, p_email: email, p_state: stateCode })
+        break
+
+      case 'name_exact_phone_state':
+        if (!first || !last || rawPhone.length !== 10) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_name_exact_phone_state', { p_first_name: first, p_last_name: last, p_phone: rawPhone, p_state: stateCode })
+        break
+
+      case 'name_fuzzy_phone_state':
+        if (!first || !last || rawPhone.length !== 10) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_name_fuzzy_phone_state', { p_first_name: first, p_last_name: last, p_phone: rawPhone, p_state: stateCode })
+        break
+
+      case 'name_exact_email_phone':
+        if (!first || !last || !email || rawPhone.length !== 10) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_name_exact_email_phone', { p_first_name: first, p_last_name: last, p_email: email, p_phone: rawPhone })
+        break
+
+      case 'name_fuzzy_email_phone':
+        if (!first || !last || !email || rawPhone.length !== 10) continue
+        data = await rpc<Record<string, unknown>>('find_mad_agent_by_name_fuzzy_email_phone', { p_first_name: first, p_last_name: last, p_email: email, p_phone: rawPhone })
         break
 
       default:

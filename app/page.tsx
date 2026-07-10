@@ -20,21 +20,31 @@ function columnsToStrategyId(cols: string[], fuzzyMode: boolean, br: Branch): st
   const key = [...cols].map(c => c.toLowerCase()).sort().join('+')
   if (key === 'email') return 'email'
   if (key === 'phone') return 'phone'
+  if (key === 'email+location') return 'email_state'
+  if (key === 'email+phone') return 'email_phone'
   if (br === 'zillow') {
     if (key === 'company+email') return 'email_company'
-    if (key === 'company+name') return 'name_company'
+    if (key === 'company+name') return fuzzyMode ? 'name_company' : 'name_exact_company'
     if (key === 'website') return 'website'
     if (key === 'email+name') return fuzzyMode ? 'name_fuzzy_email' : 'name_exact_email'
     if (key === 'name+phone') return fuzzyMode ? 'name_fuzzy_phone' : 'name_exact_phone'
-    if (key === 'company+location+name') return 'name_company_state'
+    if (key === 'company+location+name') return fuzzyMode ? 'name_company_state' : 'name_exact_company_state'
     if (key === 'location+name') return fuzzyMode ? 'name_state_fuzzy' : 'name_state_exact'
     if (key === 'name') return fuzzyMode ? 'name_state_fuzzy' : 'name_state_exact'
+    if (key === 'email+location+name') return fuzzyMode ? 'name_fuzzy_email_state' : 'name_exact_email_state'
+    if (key === 'location+name+phone') return fuzzyMode ? 'name_fuzzy_phone_state' : 'name_exact_phone_state'
+    if (key === 'location+website') return 'website_state'
+    if (key === 'name+website') return fuzzyMode ? 'website_name_fuzzy' : 'website_name_exact'
   }
   if (br === 'mad') {
     if (key === 'email+name') return fuzzyMode ? 'name_fuzzy_email' : 'name_exact_email'
     if (key === 'name+phone') return fuzzyMode ? 'name_fuzzy_phone' : 'name_exact_phone'
     if (key === 'location+name') return fuzzyMode ? 'name_state_fuzzy' : 'name_state_exact'
     if (key === 'name') return fuzzyMode ? 'name_fuzzy' : 'name_exact'
+    if (key === 'email+location+name') return fuzzyMode ? 'name_fuzzy_email_state' : 'name_exact_email_state'
+    if (key === 'location+name+phone') return fuzzyMode ? 'name_fuzzy_phone_state' : 'name_exact_phone_state'
+    if (key === 'email+name+phone') return fuzzyMode ? 'name_fuzzy_email_phone' : 'name_exact_email_phone'
+    if (key === 'location+phone') return 'phone_state'
   }
   return null
 }
@@ -50,19 +60,31 @@ function ZillowMatchBadge({ type }: { type: string | null }) {
     )
   }
   const colors: Record<string, { bg: string; color: string }> = {
-    email_company:     { bg: '#dcfce7', color: '#15803d' },
-    email:             { bg: '#bbf7d0', color: '#22c55e' },
-    name_exact_email:  { bg: '#d1fae5', color: '#065f46' },
-    name_fuzzy_email:  { bg: '#a7f3d0', color: '#047857' },
-    name_exact_phone:  { bg: '#e0f2fe', color: '#0369a1' },
-    name_fuzzy_phone:  { bg: '#bae6fd', color: '#0284c7' },
-    name_company:      { bg: '#f3e8ff', color: '#a855f7' },
-    website:           { bg: '#e0f2fe', color: '#0ea5e9' },
-    phone_name_fuzzy:  { bg: '#dbeafe', color: '#3b82f6' },
-    name_company_state:{ bg: '#ffedd5', color: '#f97316' },
-    name_state_fuzzy:  { bg: '#fef9c3', color: '#eab308' },
-    name_state_exact:  { bg: '#ddd6fe', color: '#7c3aed' },
-    no_match:          { bg: '#fee2e2', color: '#ef4444' },
+    email_company:          { bg: '#dcfce7', color: '#15803d' },
+    email:                  { bg: '#bbf7d0', color: '#22c55e' },
+    email_state:            { bg: '#d1fae5', color: '#059669' },
+    email_phone:            { bg: '#a7f3d0', color: '#065f46' },
+    name_exact_email:       { bg: '#d1fae5', color: '#065f46' },
+    name_fuzzy_email:       { bg: '#a7f3d0', color: '#047857' },
+    name_exact_email_state: { bg: '#ccfbf1', color: '#0f766e' },
+    name_fuzzy_email_state: { bg: '#99f6e4', color: '#0d9488' },
+    name_exact_phone:       { bg: '#e0f2fe', color: '#0369a1' },
+    name_fuzzy_phone:       { bg: '#bae6fd', color: '#0284c7' },
+    name_exact_phone_state: { bg: '#dbeafe', color: '#1d4ed8' },
+    name_fuzzy_phone_state: { bg: '#c7d2fe', color: '#4338ca' },
+    name_exact_company:     { bg: '#f3e8ff', color: '#7c3aed' },
+    name_company:           { bg: '#f3e8ff', color: '#a855f7' },
+    name_exact_company_state: { bg: '#ede9fe', color: '#6d28d9' },
+    name_company_state:     { bg: '#ffedd5', color: '#f97316' },
+    website:                { bg: '#e0f2fe', color: '#0ea5e9' },
+    website_state:          { bg: '#bae6fd', color: '#0369a1' },
+    website_name_fuzzy:     { bg: '#e0f2fe', color: '#0284c7' },
+    website_name_exact:     { bg: '#cffafe', color: '#0e7490' },
+    phone_name_fuzzy:       { bg: '#dbeafe', color: '#3b82f6' },
+    phone:                  { bg: '#eff6ff', color: '#2563eb' },
+    name_state_fuzzy:       { bg: '#fef9c3', color: '#eab308' },
+    name_state_exact:       { bg: '#ddd6fe', color: '#7c3aed' },
+    no_match:               { bg: '#fee2e2', color: '#ef4444' },
   }
   const c = colors[type] ?? { bg: '#f3f4f6', color: '#6b7280' }
   return (
@@ -81,17 +103,26 @@ function MadMatchBadge({ type }: { type: string | null }) {
     )
   }
   const colors: Record<string, { bg: string; color: string }> = {
-    email:            { bg: '#dcfce7', color: '#22c55e' },
-    phone:            { bg: '#dbeafe', color: '#3b82f6' },
-    name_exact_email: { bg: '#d1fae5', color: '#065f46' },
-    name_fuzzy_email: { bg: '#a7f3d0', color: '#047857' },
-    name_exact_phone: { bg: '#e0f2fe', color: '#0369a1' },
-    name_fuzzy_phone: { bg: '#bae6fd', color: '#0284c7' },
-    name_state_exact: { bg: '#f3e8ff', color: '#a855f7' },
-    name_state_fuzzy: { bg: '#fef9c3', color: '#eab308' },
-    name_exact:       { bg: '#f3e8ff', color: '#a855f7' },
-    name_fuzzy:       { bg: '#fef9c3', color: '#eab308' },
-    no_match:         { bg: '#fee2e2', color: '#ef4444' },
+    email:                   { bg: '#dcfce7', color: '#22c55e' },
+    email_phone:             { bg: '#bbf7d0', color: '#15803d' },
+    email_state:             { bg: '#d1fae5', color: '#059669' },
+    phone:                   { bg: '#dbeafe', color: '#3b82f6' },
+    phone_state:             { bg: '#c7d2fe', color: '#4338ca' },
+    name_exact_email:        { bg: '#d1fae5', color: '#065f46' },
+    name_fuzzy_email:        { bg: '#a7f3d0', color: '#047857' },
+    name_exact_email_state:  { bg: '#ccfbf1', color: '#0f766e' },
+    name_fuzzy_email_state:  { bg: '#99f6e4', color: '#0d9488' },
+    name_exact_email_phone:  { bg: '#ecfdf5', color: '#047857' },
+    name_fuzzy_email_phone:  { bg: '#d1fae5', color: '#065f46' },
+    name_exact_phone:        { bg: '#e0f2fe', color: '#0369a1' },
+    name_fuzzy_phone:        { bg: '#bae6fd', color: '#0284c7' },
+    name_exact_phone_state:  { bg: '#dbeafe', color: '#1d4ed8' },
+    name_fuzzy_phone_state:  { bg: '#ede9fe', color: '#6d28d9' },
+    name_state_exact:        { bg: '#f3e8ff', color: '#a855f7' },
+    name_state_fuzzy:        { bg: '#fef9c3', color: '#eab308' },
+    name_exact:              { bg: '#f3e8ff', color: '#a855f7' },
+    name_fuzzy:              { bg: '#fef9c3', color: '#eab308' },
+    no_match:                { bg: '#fee2e2', color: '#ef4444' },
   }
   const c = colors[type] ?? { bg: '#f3f4f6', color: '#6b7280' }
   return (
