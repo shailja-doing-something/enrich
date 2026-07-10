@@ -1,5 +1,21 @@
 # Release Notes
 
+## [0.9.21] — 2026-07-10 — Complete strategy coverage for Zillow and MAD branches
+
+### Added
+- `lib/pipeline/strategies.ts` — 12 new Zillow strategies: `phone`, `email_state`, `email_phone`, `name_exact_company`, `name_exact_company_state`, `name_exact_email_state`, `name_fuzzy_email_state`, `name_exact_phone_state`, `name_fuzzy_phone_state`, `website_state`, `website_name_fuzzy`, `website_name_exact`
+- `lib/pipeline/strategies.ts` — 9 new MAD strategies: `email_phone`, `email_state`, `phone_state`, `name_exact_email_state`, `name_fuzzy_email_state`, `name_exact_phone_state`, `name_fuzzy_phone_state`, `name_exact_email_phone`, `name_fuzzy_email_phone`
+
+### Changed
+- `lib/pipeline/stage1.ts` — added 12 new `case` blocks to `lookupZillowProfile` switch; `FALLBACK_ZILLOW_CONFIG` expanded to 24 strategy IDs in priority order
+- `lib/pipeline/mad.ts` — added 9 new `case` blocks to `lookupMadAgent` switch; `FALLBACK_MAD_CONFIG` expanded to 19 strategy IDs in priority order
+- `app/page.tsx` — `columnsToStrategyId` now covers all new column combinations for both branches including fuzzy/exact split for `company+name` and `company+location+name`; badge color maps updated for all new match types
+
+### DB changes
+- No migration required — new strategies call new RPCs that must be created in Supabase dashboard before use
+
+---
+
 ## [0.9.20] — 2026-07-06 — Column-button UI for match step configuration + named strategy system
 
 ### Changed
